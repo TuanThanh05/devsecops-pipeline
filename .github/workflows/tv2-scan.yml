@@ -102,87 +102,76 @@ jobs:
   
   
   
-  dependency_check:
-    name: OWASP Dependency-Check - SCA
+  
+  trivy_fs:
+    name: Trivy - SCA
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Install Dependency-Check
+      - name: Install Trivy CLI
         shell: bash
         run: |
-          set -e
-          VERSION=$(curl -fsSL https://dependency-check.github.io/DependencyCheck/current.txt)
-          echo "Dependency-Check version: $VERSION"
+          set -euo pipefail
 
-          curl -fL --retry 3 \
-            "https://github.com/dependency-check/DependencyCheck/releases/download/v${VERSION}/dependency-check-${VERSION}-release.zip" \
-            -o dependency-check.zip
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
 
-          unzip -q dependency-check.zip
-          chmod +x dependency-check/bin/dependency-check.sh
-          dependency-check/bin/dependency-check.sh --version
+          wget -qO - https://get.trivy.dev/deb/public.key \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
 
-      - name: Cache vulnerability database
-        uses: actions/cache@v4
-        with:
-          path: dependency-check/data
-          key: dependency-check-db-${{ runner.os }}-v1
-          restore-keys: |
-            dependency-check-db-${{ runner.os }}-
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://get.trivy.dev/deb generic main" \
+            | sudo tee /etc/apt/sources.list.d/trivy.list
+
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+          trivy --version
 
       - name: Scan dependencies
         id: scan
         shell: bash
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
-          mkdir -p reports
-
-          ARGS=(
-            --project "DevSecOps Pipeline"
-            --scan .
-            --out reports
-            --format HTML
-            --format JSON
-            --failOnCVSS 7
-            --data dependency-check/data
-          )
-
-          if [ -n "$NVD_API_KEY" ]; then
-            ARGS+=(--nvdApiKey "$NVD_API_KEY")
-          fi
-
           set +e
-          dependency-check/bin/dependency-check.sh "${ARGS[@]}"
-          RESULT=$?
-          set -e
 
-          echo "exit_code=$RESULT" >> "$GITHUB_OUTPUT"
+          trivy fs . \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignorefile .trivyignore \
+            --format json \
+            --output trivy-report.json \
+            --exit-code 1 \
+            --no-progress
+
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+
           exit 0
 
-      - name: Upload Dependency-Check reports
+      - name: Upload Trivy report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-check-reports
-          path: reports/
+          name: trivy-report
+          path: trivy-report.json
           if-no-files-found: warn
+          retention-days: 14
 
-      - name: Enforce Dependency-Check gate
+      - name: Enforce Trivy gate
         if: always() && steps.scan.outputs.exit_code != ''
+        shell: bash
         env:
           SCAN_EXIT: ${{ steps.scan.outputs.exit_code }}
-        run: exit "$SCAN_EXIT"
+        run: |
+          if [ "$SCAN_EXIT" -ne 0 ]; then
+            echo "Trivy failed or found HIGH/CRITICAL vulnerabilities."
+            exit 1
+          fi
 
+          echo "Trivy security gate passed."
 
 
