@@ -100,27 +100,48 @@ jobs:
         run: exit "$SCAN_EXIT"
 
   
+  
   trivy_fs:
     name: Trivy - SCA
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Install Trivy CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -fsSL \
+            https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            -o install-trivy.sh
+
+          sudo sh install-trivy.sh -b /usr/local/bin v0.65.0
+
+          trivy --version
+
       - name: Scan dependencies
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          format: json
-          output: trivy-report.json
-          exit-code: "0"
-          trivyignores: .trivyignore
-          version: v0.65.0
-          cache: "false"
+        id: scan
+        shell: bash
+        run: |
+          set +e
+
+          trivy fs . \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --format json \
+            --output trivy-report.json \
+            --exit-code 1
+
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+
+          exit 0
 
       - name: Upload Trivy report
         if: always()
@@ -129,18 +150,19 @@ jobs:
           name: trivy-report
           path: trivy-report.json
           if-no-files-found: warn
+          retention-days: 14
 
       - name: Enforce Trivy gate
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          format: table
-          exit-code: "1"
-          trivyignores: .trivyignore
-          version: v0.65.0
-          cache: "false"
+        if: always() && steps.scan.outputs.exit_code != ''
+        shell: bash
+        env:
+          SCAN_EXIT: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          if [ "$SCAN_EXIT" -ne 0 ]; then
+            echo "Trivy scan failed or found HIGH/CRITICAL vulnerabilities."
+            exit 1
+          fi
+
+          echo "Trivy security gate passed."
+
 
