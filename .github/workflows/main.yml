@@ -1,5 +1,7 @@
 name: DevSecOps Pipeline
-
+permissions:
+  contents: read
+  security-events: write 
 on:
   push:
     branches: [ main, tv1-deploy ]
@@ -11,54 +13,116 @@ env:
 
 jobs:
   # ============================================
-  # STAGE 1: CHECKOUT & SETUP
-  # ============================================
-  checkout:
-    name: "Checkout Code"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        run: echo "Checking out code from repository..."
-      
-      - name: Display branch info
-        run: echo "Branch - ${{ github.ref_name }}"
+# STAGE 1+2: SECURITY SCANNING (Parallel)
+# Mỗi job tự checkout + tự quét luôn
+# ============================================
 
-  # ============================================
-  # STAGE 2: SECURITY SCANNING (Parallel)
-  # ============================================
   secret-scanning:
     name: "Secret Scanning"
     runs-on: ubuntu-latest
-    needs: checkout
     steps:
-      - name: Run GitLeaks
-        run: echo "Running GitLeaks to scan for secrets..."
-      
-      - name: Check for hardcoded credentials
-        run: echo "Scanning for API keys, passwords, tokens..."
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # GitLeaks cần full history
+
+      - name: Display pipeline info
+        run: |
+          echo "Repository : ${{ github.repository }}"
+          echo "Branch     : ${{ github.ref_name }}"
+          echo "Commit SHA : ${{ github.sha }}"
+          echo "Actor      : ${{ github.actor }}"
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: true
+
 
   sast-scan:
     name: "SAST - Static Code Analysis"
     runs-on: ubuntu-latest
-    needs: checkout
     steps:
-      - name: Run Semgrep
-        run: echo "Running Semgrep for static analysis..."
-      
-      - name: Check code quality
-        run: echo "Analyzing code for security vulnerabilities..."
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate app.py exists
+        run: |
+          if [ ! -f "app.py" ]; then
+            echo "Thiếu app.py"
+            exit 1
+          fi
+          echo "app.py found — bắt đầu quét SAST"
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Semgrep (SARIF output)
+        id: semgrep
+        run: |
+          semgrep \
+            --config=p/security-audit \
+            --config=p/python \
+            --config=p/owasp-top-ten \
+            --sarif \
+            --output=semgrep.sarif \
+            .
+        continue-on-error: true
+
+      - name: Upload Semgrep results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+      - name: Fail on security issues
+        if: steps.semgrep.outcome == 'failure'
+        run: |
+          echo "SAST found security vulnerabilities!"
+          exit 1
+
 
   sca-scan:
     name: "SCA - Dependency Check"
     runs-on: ubuntu-latest
-    needs: checkout
     steps:
-      - name: Run Trivy for dependencies
-        run: echo "Running Trivy to scan dependencies..."
-      
-      - name: Check vulnerable libraries
-        run: echo "Checking requirements.txt for known vulnerabilities..."
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Validate requirements.txt exists
+        run: |
+          if [ ! -f "requirements.txt" ]; then
+            echo " Thiếu requirements.txt"
+            exit 1
+          fi
+          echo "requirements.txt found — bắt đầu quét SCA"
+          cat requirements.txt
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Trivy and fail on vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
   # ============================================
   # STAGE 3: BUILD
   # ============================================
