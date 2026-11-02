@@ -2,9 +2,9 @@ name: DevSecOps Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, tv1-deploy ]   # ← thêm tv1-deploy
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 
 env:
   PYTHON_VERSION: '3.11'
@@ -142,11 +142,12 @@ jobs:
 
   # ============================================
   # STAGE 7: NOTIFICATION
+  # Dùng always() để chạy dù deploy bị skip
   # ============================================
   notify:
     name: "📧 Send Notification"
     runs-on: ubuntu-latest
-    needs: [deploy-staging, deploy-production]
+    needs: quality-gate          # ← chỉ cần quality-gate, không cần deploy
     if: always()
     steps:
       - name: Pipeline result
