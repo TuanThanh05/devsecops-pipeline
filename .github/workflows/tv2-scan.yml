@@ -67,8 +67,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Semgrep
-        run: |
-          python -m pip install semgrep
+        run: python -m pip install semgrep
 
       - name: Scan source code
         id: scan
@@ -108,7 +107,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Scan dependencies
-        uses: aquasecurity/trivy-action@v0.33.1
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           scan-type: fs
           scan-ref: .
