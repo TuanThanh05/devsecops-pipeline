@@ -31,7 +31,7 @@ jobs:
           docker run -d --name app-demo -p 5000:5000 "$IMAGE"
           for i in $(seq 1 10); do
             if curl -fsS http://localhost:5000/health; then exit 0; fi
-            sleep 2 build-and-container-scan
+            sleep 2
           done
           echo "Timeout 20 second"
           docker logs app-demo
