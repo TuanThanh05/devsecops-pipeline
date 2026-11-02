@@ -1,0 +1,22 @@
+name: TV2 - Scan Level 1 (Gitleaks, Semgrep, Trivy FS)
+
+# Kích hoạt chạy thủ công trên giao diện GitHub Actions để thử nghiệm độc lập
+on:
+  workflow_dispatch:
+
+jobs:
+  t2-security-scan:
+    name: Level 1 Security Scanning
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout mã nguồn (Fetch full history cho Gitleaks)[cite: 4]
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. Bước Test Khung Ban Đầu
+      - name: Test Environment Setup
+        run: |
+          echo "Khởi tạo thành công môi trường quét Tầng 1 cho TV2!"
