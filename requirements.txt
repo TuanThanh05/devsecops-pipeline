@@ -1,2 +1,10 @@
 Flask==3.0.0
 Werkzeug==3.0.3
+
+# =============================================================
+# 🔴 DEMO 5 — SCA: Thư viện có CVE (Trivy)
+# Hướng dẫn demo: Đổi Werkzeug==3.0.3 thành Werkzeug==3.0.1 → push → Trivy FAIL
+# Giải thích: Werkzeug 3.0.1 có CVE-2024-34069 (HIGH)
+#             Fixed version: 3.0.3
+# =============================================================
+# Werkzeug==3.0.1   ← bỏ comment dòng này + comment dòng Werkzeug==3.0.3 ở trên
