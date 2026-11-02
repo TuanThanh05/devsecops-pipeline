@@ -99,6 +99,7 @@ jobs:
           SCAN_EXIT: ${{ steps.scan.outputs.exit_code }}
         run: exit "$SCAN_EXIT"
 
+  
   trivy_fs:
     name: Trivy - SCA
     runs-on: ubuntu-latest
@@ -118,6 +119,8 @@ jobs:
           output: trivy-report.json
           exit-code: "0"
           trivyignores: .trivyignore
+          version: v0.65.0
+          cache: "false"
 
       - name: Upload Trivy report
         if: always()
@@ -138,3 +141,6 @@ jobs:
           format: table
           exit-code: "1"
           trivyignores: .trivyignore
+          version: v0.65.0
+          cache: "false"
+
