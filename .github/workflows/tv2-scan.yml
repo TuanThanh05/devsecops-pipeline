@@ -1,22 +1,141 @@
-name: TV2 - Scan Level 1 (Gitleaks, Semgrep, Trivy FS)
 
-# Kích hoạt chạy thủ công trên giao diện GitHub Actions để thử nghiệm độc lập
+name: TV2 - Security Scanning
+
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+
+permissions:
+  contents: read
 
 jobs:
-  t2-security-scan:
-    name: Level 1 Security Scanning
+  gitleaks:
+    name: Gitleaks - Secret Scanning
     runs-on: ubuntu-latest
-
     steps:
-      # 1. Checkout mã nguồn (Fetch full history cho Gitleaks)[cite: 4]
-      - name: Checkout Code
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Bước Test Khung Ban Đầu
-      - name: Test Environment Setup
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install Gitleaks
         run: |
-          echo "Khởi tạo thành công môi trường quét Tầng 1 cho TV2!"
+          go install github.com/gitleaks/gitleaks/v8@v8.24.3
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Scan secrets
+        id: scan
+        shell: bash
+        run: |
+          set +e
+          gitleaks git . \
+            --config .gitleaks.toml \
+            --report-format json \
+            --report-path gitleaks-report.json \
+            --exit-code 1
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          if-no-files-found: warn
+
+      - name: Enforce Gitleaks gate
+        if: always() && steps.scan.outputs.exit_code != ''
+        env:
+          SCAN_EXIT: ${{ steps.scan.outputs.exit_code }}
+        run: exit "$SCAN_EXIT"
+
+  semgrep:
+    name: Semgrep - SAST
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Semgrep
+        run: |
+          python -m pip install semgrep
+
+      - name: Scan source code
+        id: scan
+        shell: bash
+        run: |
+          set +e
+          semgrep scan \
+            --config p/security-audit \
+            --config p/secrets \
+            --severity ERROR \
+            --json \
+            --output semgrep-report.json \
+            --error .
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Semgrep report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+          if-no-files-found: warn
+
+      - name: Enforce Semgrep gate
+        if: always() && steps.scan.outputs.exit_code != ''
+        env:
+          SCAN_EXIT: ${{ steps.scan.outputs.exit_code }}
+        run: exit "$SCAN_EXIT"
+
+  trivy_fs:
+    name: Trivy - SCA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Scan dependencies
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: trivy-report.json
+          exit-code: "0"
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.json
+          if-no-files-found: warn
+
+      - name: Enforce Trivy gate
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+          trivyignores: .trivyignore
