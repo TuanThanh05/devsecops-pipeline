@@ -203,11 +203,18 @@ jobs:
     steps:
       - name: Pipeline result
         run: |
-          echo "Secret Scan   : ${{ needs.secret-scanning.result }}"
-          echo "SAST          : ${{ needs.sast-scan.result }}"
-          echo "SCA           : ${{ needs.sca-scan.result }}"
-          echo "Container Scan: ${{ needs.container-scan.result }}"
-          echo "Deploy        : ${{ needs.deploy-production.result }}"
+          {
+            echo "## Security Gate Results"
+            echo ""
+            echo "| Gate | Tool | Result |"
+            echo "|---|---|---|"
+            echo "| Secret Scan | Gitleaks | ${{ needs.secret-scanning.result }} |"
+            echo "| SAST | Semgrep | ${{ needs.sast-scan.result }} |"
+            echo "| SCA | Trivy fs | ${{ needs.sca-scan.result }} |"
+            echo "| Container Scan | Trivy image | ${{ needs.container-scan.result }} |"
+            echo "| Deploy | Render | ${{ needs.deploy-production.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
     
 
   # STAGE 6 FAILURE EMAIL
