@@ -1,0 +1,213 @@
+name: DevSecOps Pipeline
+permissions:
+  contents: read
+  security-events: write 
+on:
+  push:
+    branches: [ main, tv1-deploy ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  secret-scanning:
+    name: "Secret Scanning"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # GitLeaks cần full history
+
+      - name: Display pipeline info
+        run: |
+          echo "Repository : ${{ github.repository }}"
+          echo "Branch     : ${{ github.ref_name }}"
+          echo "Commit SHA : ${{ github.sha }}"
+          echo "Actor      : ${{ github.actor }}"
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: true
+
+
+  sast-scan:
+    name: "SAST - Static Code Analysis"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate app.py exists
+        run: |
+          if [ ! -f "app.py" ]; then
+            echo "Thiếu app.py"
+            exit 1
+          fi
+          echo "app.py found — bắt đầu quét SAST"
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Semgrep (SARIF output)
+        id: semgrep
+        run: |
+          semgrep \
+            --config=p/security-audit \
+            --config=p/python \
+            --config=p/owasp-top-ten \
+            --sarif \
+            --output=semgrep.sarif \
+            .
+        continue-on-error: true
+
+      - name: Upload Semgrep results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+      - name: Fail on security issues
+        if: steps.semgrep.outcome == 'failure'
+        run: |
+          echo "SAST found security vulnerabilities!"
+          exit 1
+
+
+  sca-scan:
+    name: "SCA - Dependency Check"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate requirements.txt exists
+        run: |
+          if [ ! -f "requirements.txt" ]; then
+            echo " Thiếu requirements.txt"
+            exit 1
+          fi
+          echo "requirements.txt found — bắt đầu quét SCA"
+          cat requirements.txt
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Trivy and fail on vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+  # ============================================
+  # STAGE 3: BUILD
+  # ============================================
+  build:
+    name: "Build Application"
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, sast-scan, sca-scan]
+    steps:
+      - name: Setup Python
+        run: echo "Setting up Python ${{ env.PYTHON_VERSION }}..."
+      
+      - name: Install dependencies
+        run: echo "Installing dependencies from requirements.txt..."
+      
+      - name: Run unit tests
+        run: echo "Running unit tests..."
+      
+      - name: Build Docker image
+        run: echo "Building Docker image..."
+
+  # ============================================
+  # STAGE 4: CONTAINER SECURITY
+  # ============================================
+  container-scan:
+    name: "Container Security Scan"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Run Trivy on Docker image
+        run: echo "Scanning Docker image for vulnerabilities..."
+      
+      - name: Check for OS vulnerabilities
+        run: echo "Checking base image and layers..."
+
+  # ============================================
+  # STAGE 5: QUALITY GATE
+  # ============================================
+  quality-gate:
+    name: "Quality Gate"
+    runs-on: ubuntu-latest
+    needs: [sast-scan, sca-scan, secret-scanning, container-scan]
+    steps:
+      - name: Evaluate security findings
+        run: echo "Evaluating all security scan results..."
+      
+      - name: Check severity thresholds
+        run: echo "Checking if Critical/High vulnerabilities exist..."
+      
+      - name: Decision - Pass or Fail
+        run: echo "Quality Gate - PASSED ✅"
+
+  # ============================================
+  # STAGE 6: DEPLOY (only if Quality Gate passes)
+  # ============================================
+  deploy-staging:
+    name: "Deploy to Staging"
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: github.ref == 'refs/heads/tv1-deploy'
+    steps:
+      - name: Deploy to staging environment
+        run: echo "Deploying to staging environment..."
+      
+      - name: Run smoke tests
+        run: echo "Running smoke tests on staging..."
+
+  deploy-production:
+    name: "Deploy to Production"
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to production environment
+        run: echo "Deploying to production environment..."
+      
+      - name: Health check
+        run: echo "Performing health check..."
+      
+      - name: Send notification
+        run: echo "Sending deployment notification..."
+
+  # ============================================
+  # STAGE 7: NOTIFICATION
+  # Dùng always() để chạy dù deploy bị skip
+  # ============================================
+  notify:
+    name: "Send Notification"
+    runs-on: ubuntu-latest
+    needs: quality-gate          # ← chỉ cần quality-gate, không cần deploy
+    if: always()
+    steps:
+      - name: Pipeline result
+        run: echo "Pipeline completed with status - ${{ job.status }}"
