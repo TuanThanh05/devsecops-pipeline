@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # cai cac goi phu thuoc
-RUN python -m pip install --no-cache-dir -r requirements.txt && && python -m pip uninstall -y pip setuptools wheel
+RUN python -m pip install --no-cache-dir -r requirements.txt && python -m pip uninstall -y pip setuptools wheel
 
 RUN useradd --create-home appuser
 
