@@ -97,13 +97,14 @@ jobs:
         id: semgrep
         shell: bash
         run: |
-          # Lưu exit code để vẫn tạo Summary trước khi quyết định gate.
-          # Không dùng --error: finding được đánh giá từ JSON ở bước sau.
           scan_exit=0
 
+          # Quét mã nguồn toàn repository, ngoại trừ workflow chính.
+          # Bảo mật file workflow được theo dõi riêng bởi TV1.
           semgrep scan \
             --config p/security-audit \
             --config p/owasp-top-ten \
+            --exclude .github/workflows/main.yml \
             --metrics off \
             --strict \
             --json-output "$REPORT_DIR/semgrep.json" \
@@ -111,6 +112,14 @@ jobs:
             . || scan_exit=$?
 
           echo "$scan_exit" > "$REPORT_DIR/semgrep-exit-code.txt"
+
+          {
+            echo "### Phạm vi SAST"
+            echo ""
+            echo "Quét mã nguồn được hỗ trợ trong toàn repository."
+            echo "Ngoại lệ: .github/workflows/main.yml."
+            echo "File workflow cần được TV1 kiểm tra bảo mật riêng."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Evaluate SAST quality gate
         shell: bash
