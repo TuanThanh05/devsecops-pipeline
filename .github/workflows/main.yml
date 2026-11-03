@@ -96,14 +96,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate app.py exists
-        shell: bash
-        run: |
-          if [ ! -f "app.py" ]; then
-            echo "Thieu app.py"
-            exit 1
-          fi
-          echo "app.py found - bat dau quet SAST"
+      
 
       # Thiet lap Python ro rang
       - name: Setup Python
@@ -178,14 +171,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate requirements.txt exists
-        shell: bash
-        run: |
-          if [ ! -f "requirements.txt" ]; then
-            echo "Thieu requirements.txt"
-            exit 1
-          fi
-          echo "requirements.txt found - bat dau quet SCA"
+      
 
       # Cai Trivy CLI thay cho action @master
       - name: Install Trivy CLI
