@@ -1,0 +1,543 @@
+name: DevSecOps Pipeline
+permissions:
+  contents: read
+  security-events: write 
+on:
+  push:
+    branches: [ main, dev-project, tv1-deploy, tv2-deploy, tv3-deploy ]
+  pull_request:
+    branches: [ main, dev-project ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  GATE_SEVERITY: HIGH,CRITICAL
+
+jobs:
+    # =========================================================
+  # TV2 - SECRET SCANNING
+  # =========================================================
+  secret-scanning:
+    name: "Secret Scanning"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run Gitleaks
+        id: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Chỉ bắt buộc với repository thuộc Organization.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_SUMMARY: "true"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+
+      - name: Secret scanning summary
+        if: always()
+        env:
+          SCAN_RESULT: ${{ steps.gitleaks.outcome }}
+        shell: bash
+        run: |
+          {
+            echo "## TV2 - Secret Scanning"
+            echo ""
+            echo "| Nội dung | Kết quả |"
+            echo "|---|---|"
+            echo "| Công cụ | Gitleaks |"
+            echo "| Trạng thái bước quét | $SCAN_RESULT |"
+            echo "| Chính sách | Chặn khi phát hiện secret hoặc scanner lỗi |"
+            echo "| Báo cáo | Artifact SARIF do Gitleaks Action quản lý |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # =========================================================
+  # TV2 - SAST: QUÉT MÃ NGUỒN TRONG TOÀN REPOSITORY
+  # =========================================================
+  sast-scan:
+    name: "SAST - Static Code Analysis"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Prepare reports
+        shell: bash
+        run: |
+          report_dir="$RUNNER_TEMP/tv2-sast-reports"
+          mkdir -p "$report_dir"
+          echo "REPORT_DIR=$report_dir" >> "$GITHUB_ENV"
+
+      - name: Install Semgrep
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check semgrep
+          semgrep --version > "$REPORT_DIR/semgrep-version.txt"
+
+      - name: Scan repository with Semgrep
+        id: semgrep
+        shell: bash
+        run: |
+          # Lưu exit code để vẫn tạo Summary trước khi quyết định gate.
+          # Không dùng --error: finding được đánh giá từ JSON ở bước sau.
+          scan_exit=0
+
+          semgrep scan \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --metrics off \
+            --strict \
+            --json-output "$REPORT_DIR/semgrep.json" \
+            --sarif-output "$REPORT_DIR/semgrep.sarif" \
+            . || scan_exit=$?
+
+          echo "$scan_exit" > "$REPORT_DIR/semgrep-exit-code.txt"
+
+      - name: Evaluate SAST quality gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from collections import Counter
+          from pathlib import Path
+
+          reports = Path(os.environ["REPORT_DIR"])
+          report_file = reports / "semgrep.json"
+          exit_file = reports / "semgrep-exit-code.txt"
+
+          try:
+              scanner_exit = int(exit_file.read_text().strip())
+              data = json.loads(report_file.read_text())
+              if not isinstance(data, dict):
+                  raise ValueError("JSON root must be an object")
+              if not isinstance(data.get("results"), list):
+                  raise ValueError("Missing or invalid results")
+          except Exception as exc:
+              print(f"::error::Semgrep report is missing or invalid: {exc}")
+              sys.exit(1)
+
+          findings = data["results"]
+          errors = data.get("errors", [])
+          paths = data.get("paths", {})
+          scanned = paths.get("scanned", [])
+          skipped = paths.get("skipped", [])
+
+          def blocks_gate(finding):
+              extra = finding.get("extra", {})
+              metadata = extra.get("metadata", {})
+              if not isinstance(metadata, dict):
+                  metadata = {}
+
+              impact = str(
+                  metadata.get("impact") or
+                  metadata.get("severity") or ""
+              ).upper()
+
+              # Metadata mức độ được ưu tiên nếu nhận diện được.
+              if impact in {"HIGH", "CRITICAL"}:
+                  return True
+              if impact in {"LOW", "MEDIUM", "MODERATE", "INFO"}:
+                  return False
+
+              # Quy ước dự phòng của nhóm khi thiếu metadata.
+              return str(extra.get("severity", "")).upper() == "ERROR"
+
+          blocking = [f for f in findings if blocks_gate(f)]
+          counts = Counter(
+              str(f.get("extra", {}).get("severity", "UNKNOWN")).upper()
+              for f in findings
+          )
+
+          # Lỗi scanner hoặc không phân tích được file nào không được coi là sạch.
+          scan_error = scanner_exit != 0 or bool(errors) or not scanned
+          status = "ERROR" if scan_error else "BLOCKED" if blocking else "PASS"
+
+          lines = [
+              "## TV2 - SAST / Semgrep",
+              "",
+              "| Nội dung | Kết quả |",
+              "|---|---|",
+              f"| Quality Gate | {status} |",
+              f"| File đã phân tích | {len(scanned)} |",
+              f"| Mục bỏ qua được ghi trong JSON | {len(skipped)} |",
+              f"| Tổng finding | {len(findings)} |",
+              f"| Finding bị chặn | {len(blocking)} |",
+              f"| Lỗi phân tích | {len(errors)} |",
+              f"| Exit code scanner | {scanner_exit} |",
+              "",
+              "### Finding theo severity của rule",
+              "",
+              "| Severity | Số lượng |",
+              "|---|---|",
+          ]
+          lines += [f"| {key} | {value} |" for key, value in sorted(counts.items())]
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("\n".join(lines) + "\n")
+
+          (reports / "gate-result.json").write_text(
+              json.dumps({
+                  "status": status,
+                  "scanned_files": len(scanned),
+                  "findings": len(findings),
+                  "blocking_findings": len(blocking),
+                  "scanner_exit_code": scanner_exit,
+                  "analysis_errors": len(errors),
+              }, indent=2)
+          )
+
+          if scan_error:
+              print("::error::Semgrep failed or scan coverage is incomplete.")
+              sys.exit(1)
+          if blocking:
+              print("::error::SAST quality gate blocked deployment.")
+              sys.exit(1)
+          PY
+
+      - name: Upload SAST reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tv2-sast-reports
+          path: ${{ env.REPORT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  # =========================================================
+  # TV2 - SCA: TỰ NHẬN DIỆN DEPENDENCY TRONG REPOSITORY
+  # =========================================================
+  sca-scan:
+    name: "SCA - Dependency Check"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    
+
+    steps:
+
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Prepare reports
+        shell: bash
+        run: |
+          report_dir="$RUNNER_TEMP/tv2-sca-reports"
+          mkdir -p "$report_dir"
+          echo "REPORT_DIR=$report_dir" >> "$GITHUB_ENV"
+
+      - name: Scan repository dependencies
+        id: trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          format: json
+          output: ${{ env.REPORT_DIR }}/trivy-fs.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+          list-all-pkgs: true
+          cache: true
+
+      - name: Evaluate dependency quality gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from collections import Counter
+          from pathlib import Path
+
+          reports = Path(os.environ["REPORT_DIR"])
+          report_file = reports / "trivy-fs.json"
+
+          try:
+              data = json.loads(report_file.read_text())
+              if not isinstance(data, dict):
+                  raise ValueError("JSON root must be an object")
+              results = data.get("Results", [])
+              if not isinstance(results, list):
+                  raise ValueError("Invalid Results")
+          except Exception as exc:
+              print(f"::error::Trivy report is missing or invalid: {exc}")
+              sys.exit(1)
+
+          gate_levels = {
+              value.strip().upper()
+              for value in os.environ["GATE_SEVERITY"].split(",")
+              if value.strip()
+          }
+          valid_levels = {"UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
+          if not gate_levels or not gate_levels <= valid_levels:
+              print("::error::Invalid GATE_SEVERITY.")
+              sys.exit(1)
+
+          vulnerabilities = [
+              vulnerability
+              for result in results
+              for vulnerability in (result.get("Vulnerabilities") or [])
+          ]
+          packages = [
+              package
+              for result in results
+              for package in (result.get("Packages") or [])
+          ]
+          blocking = [
+              vulnerability
+              for vulnerability in vulnerabilities
+              if str(vulnerability.get("Severity", "UNKNOWN")).upper()
+              in gate_levels
+          ]
+          counts = Counter(
+              str(v.get("Severity", "UNKNOWN")).upper()
+              for v in vulnerabilities
+          )
+
+          # Dự án này có dependency: không nhận diện được package thì fail.
+          coverage_error = not packages
+          status = "ERROR" if coverage_error else "BLOCKED" if blocking else "PASS"
+
+          lines = [
+              "## TV2 - SCA / Trivy filesystem",
+              "",
+              "| Nội dung | Kết quả |",
+              "|---|---|",
+              f"| Quality Gate | {status} |",
+              f"| Số target trong báo cáo | {len(results)} |",
+              f"| Số bản ghi package | {len(packages)} |",
+              f"| Tổng bản ghi lỗ hổng | {len(vulnerabilities)} |",
+              f"| Bản ghi bị chặn | {len(blocking)} |",
+              f"| Ngưỡng chặn | {', '.join(sorted(gate_levels))} |",
+              "| Bỏ qua lỗ hổng chưa có bản vá | Không |",
+              "",
+              "### Lỗ hổng theo severity",
+              "",
+              "| Severity | Số lượng |",
+              "|---|---|",
+          ]
+          lines += [
+              f"| {level} | {counts.get(level, 0)} |"
+              for level in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
+          ]
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("\n".join(lines) + "\n")
+
+          (reports / "gate-result.json").write_text(
+              json.dumps({
+                  "status": status,
+                  "targets": len(results),
+                  "package_records": len(packages),
+                  "vulnerability_records": len(vulnerabilities),
+                  "blocking_records": len(blocking),
+                  "gate_severity": sorted(gate_levels),
+              }, indent=2)
+          )
+
+          if coverage_error:
+              print("::error::No dependency packages detected; check supported manifests and lockfiles.")
+              sys.exit(1)
+          if blocking:
+              print("::error::Dependency quality gate blocked deployment.")
+              sys.exit(1)
+          PY
+
+      - name: Upload dependency reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tv2-sca-reports
+          path: ${{ env.REPORT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  # STAGE 3 DOCKER BUILD AND SCAN CONTAINER
+  container-scan:
+      name: "Build And Scan Container"
+      runs-on: ubuntu-latest
+      needs: [secret-scanning, sast-scan, sca-scan]
+      env: 
+        # ten image cua docker
+        IMAGE: devsecops-app:${{github.sha}}
+      
+      steps:
+        # tai code cua repo ve may ao
+        - name: Checkout code
+          uses: actions/checkout@v4
+        
+        # build docker thanh image
+        - name: Build Image
+          run: docker build -t "$IMAGE" .
+
+        # kiem tra app hoat dong
+        - name: Test App
+          run: |
+            docker run -d --name app-demo -p 5000:5000 "$IMAGE"
+            for i in $(seq 1 10); do
+              if curl -fsS http://localhost:5000/health; then exit 0; fi
+              sleep 2
+            done
+            echo "Timeout 20 second"
+            docker logs app-demo
+            exit 1
+
+        # kiem tra tinh trang user
+        - name: Test user container
+          run: test "$(docker run --rm "$IMAGE" whoami)" = "appuser"
+      
+        # quet container lan 1 lay bao cao tong the
+        - name: Scan Container By Trivy
+          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          with: 
+            image-ref: ${{ env.IMAGE }}
+            # bo qua cac lo hong chua co ban va
+            ignore-unfixed: true 
+            format: json
+            output: trivy-image.json
+
+        # quet container lan 2 chan cac muc lo hong HIGH hoac CRITICAL
+        - name: gate-container
+          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          with: 
+            image-ref: ${{ env.IMAGE }}
+            severity: ${{ env.GATE_SEVERITY }}
+            ignore-unfixed: true
+            exit-code: '1'
+            format: table
+
+        # luu bao cao
+        - name: Container Scan Report
+          if: always()  
+          uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          with:
+            name: container-scan-report 
+            path: trivy-image.json
+
+  # STAGE 4 DEPLOY PRODUCTION
+  deploy-production:
+    name: "Deploy to Production"
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, sast-scan, sca-scan, container-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to production environment
+        run: echo "Deploying to production environment..."
+
+
+  # STAGE 5 NOTIFICATION
+  notify:
+    name: "Notification"
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, sast-scan, sca-scan, container-scan, deploy-production]
+    if: always()
+    steps:
+      - name: Pipeline result
+        run: |
+          {
+            echo "## Security Gate Results"
+            echo ""
+            echo "| Gate | Tool | Result |"
+            echo "|---|---|---|"
+            echo "| Secret Scan | Gitleaks | ${{ needs.secret-scanning.result }} |"
+            echo "| SAST | Semgrep | ${{ needs.sast-scan.result }} |"
+            echo "| SCA | Trivy fs | ${{ needs.sca-scan.result }} |"
+            echo "| Container Scan | Trivy image | ${{ needs.container-scan.result }} |"
+            echo "| Deploy | Render | ${{ needs.deploy-production.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+    
+
+  # STAGE 6 FAILURE EMAIL
+  failure-email:
+    name: "Failure Email"
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, sast-scan, sca-scan, container-scan, deploy-production]
+    if: failure()
+    steps:
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ secrets.MAIL_TO }}
+          from: DevSecOps Pipeline <${{ secrets.MAIL_USERNAME }}>
+          subject: "[DEPLOY BLOCKED] ${{ github.repository }} - Branch ${{ github.ref_name }}"
+          body: |
+            Security alert, deploy blocked
+
+            Pushed by : ${{ github.actor }}
+            Branch    : ${{ github.ref_name }}
+            Commit    : ${{ github.sha }}
+
+            Reports:
+              Secret Scan    : ${{ needs.secret-scanning.result }}
+              SAST           : ${{ needs.sast-scan.result }}
+              SCA            : ${{ needs.sca-scan.result }}
+              Container Scan : ${{ needs.container-scan.result }}
+              Deploy         : ${{ needs.deploy-production.result }}
+
+            View details:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # STAGE 7 SUCCESS EMAIL
+  success-email:
+    name: "Success Email"
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    steps:
+      - name: Send success email
+        uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ secrets.MAIL_TO }}
+          from: DevSecOps Pipeline <${{ secrets.MAIL_USERNAME }}>
+          subject: "[DEPLOY SUCCEEDED] ${{ github.repository }}"
+          body: |
+            Deployment successful.
+
+            Pushed by : ${{ github.actor }}
+            Branch    : ${{ github.ref_name }}
+            Commit    : ${{ github.sha }}
+
+            View details:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
