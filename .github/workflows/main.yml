@@ -178,7 +178,7 @@ jobs:
         # luu bao cao
         - name: Container Scan Report
           if: always()  
-          uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+          uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
           with:
             name: container-scan-report 
             path: trivy-image.json
@@ -194,17 +194,87 @@ jobs:
         run: echo "Deploying to production environment..."
 
 
- #  STAGE 5 NOTIFICATION
+  # STAGE 5 NOTIFICATION
   notify:
-    name: "Stage 6 · Notification"
+    name: "Notification"
     runs-on: ubuntu-latest
     needs: [secret-scanning, sast-scan, sca-scan, container-scan, deploy-production]
     if: always()
     steps:
       - name: Pipeline result
         run: |
-          echo "Secret Scan   : ${{ needs.secret-scanning.result }}"
-          echo "SAST          : ${{ needs.sast-scan.result }}"
-          echo "SCA           : ${{ needs.sca-scan.result }}"
-          echo "Container Scan: ${{ needs.container-scan.result }}"
-          echo "Deploy        : ${{ needs.deploy-production.result }}"
+          {
+            echo "## Security Gate Results"
+            echo ""
+            echo "| Gate | Tool | Result |"
+            echo "|---|---|---|"
+            echo "| Secret Scan | Gitleaks | ${{ needs.secret-scanning.result }} |"
+            echo "| SAST | Semgrep | ${{ needs.sast-scan.result }} |"
+            echo "| SCA | Trivy fs | ${{ needs.sca-scan.result }} |"
+            echo "| Container Scan | Trivy image | ${{ needs.container-scan.result }} |"
+            echo "| Deploy | Render | ${{ needs.deploy-production.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+    
+
+  # STAGE 6 FAILURE EMAIL
+  failure-email:
+    name: "Failure Email"
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, sast-scan, sca-scan, container-scan, deploy-production]
+    if: failure()
+    steps:
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ secrets.MAIL_TO }}
+          from: DevSecOps Pipeline <${{ secrets.MAIL_USERNAME }}>
+          subject: "[DEPLOY BLOCKED] ${{ github.repository }} - Branch ${{ github.ref_name }}"
+          body: |
+            Security alert, deploy blocked
+
+            Pushed by : ${{ github.actor }}
+            Branch    : ${{ github.ref_name }}
+            Commit    : ${{ github.sha }}
+
+            Reports:
+              Secret Scan    : ${{ needs.secret-scanning.result }}
+              SAST           : ${{ needs.sast-scan.result }}
+              SCA            : ${{ needs.sca-scan.result }}
+              Container Scan : ${{ needs.container-scan.result }}
+              Deploy         : ${{ needs.deploy-production.result }}
+
+            View details:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # STAGE 7 SUCCESS EMAIL
+  success-email:
+    name: "Success Email"
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    steps:
+      - name: Send success email
+        uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          to: ${{ secrets.MAIL_TO }}
+          from: DevSecOps Pipeline <${{ secrets.MAIL_USERNAME }}>
+          subject: "[DEPLOY SUCCEEDED] ${{ github.repository }}"
+          body: |
+            Deployment successful.
+
+            Pushed by : ${{ github.actor }}
+            Branch    : ${{ github.ref_name }}
+            Commit    : ${{ github.sha }}
+
+            View details:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
