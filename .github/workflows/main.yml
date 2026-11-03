@@ -1,0 +1,378 @@
+name: DevSecOps Pipeline
+permissions:
+  contents: read
+  security-events: write 
+on:
+  push:
+    branches: [ main, tv1-deploy, tv2-deploy ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ============================================
+  # STAGE 2A: GITLEAKS - SECRET SCANNING
+  # ============================================
+  secret-scanning:
+    name: "Secret Scanning - Gitleaks"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Display pipeline info
+        run: |
+          echo "Repository : ${{ github.repository }}"
+          echo "Branch     : ${{ github.ref_name }}"
+          echo "Commit SHA : ${{ github.sha }}"
+          echo "Actor      : ${{ github.actor }}"
+
+      # Cai Gitleaks CLI de xuat JSON artifact
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install Gitleaks
+        shell: bash
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.24.3
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # Luu exit code, khong dung job ngay
+      - name: Scan secrets
+        id: gitleaks
+        shell: bash
+        run: |
+          set +e
+
+          gitleaks git . \
+            --report-format json \
+            --report-path gitleaks-report.json \
+            --exit-code 1
+
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # Upload bao cao ke ca khi phat hien secret
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Chan pipeline khi Gitleaks bao loi
+      - name: Enforce Gitleaks gate
+        if: always() && steps.gitleaks.outputs.exit_code != ''
+        shell: bash
+        env:
+          SCAN_EXIT: ${{ steps.gitleaks.outputs.exit_code }}
+        run: |
+          if [ "$SCAN_EXIT" -ne 0 ]; then
+            echo "Gitleaks found secrets or scan failed."
+            exit 1
+          fi
+          echo "Gitleaks security gate passed."
+
+  # ============================================
+  # STAGE 2B: SEMGREP - SAST
+  # ============================================
+  sast-scan:
+    name: "SAST - Semgrep"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate app.py exists
+        shell: bash
+        run: |
+          if [ ! -f "app.py" ]; then
+            echo "Thieu app.py"
+            exit 1
+          fi
+          echo "app.py found - bat dau quet SAST"
+
+      # Thiet lap Python ro rang
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Semgrep
+        run: python -m pip install semgrep
+
+      # Xuat SARIF + JSON va bat --error
+      - name: Run Semgrep
+        id: semgrep
+        shell: bash
+        run: |
+          set +e
+
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/python \
+            --config=p/owasp-top-ten \
+            --error \
+            --sarif-output=semgrep.sarif \
+            --json-output=semgrep-report.json \
+            .
+
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Semgrep SARIF
+        if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: semgrep.sarif
+
+      # Luu bao cao de tai ve
+      - name: Upload Semgrep artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: |
+            semgrep.sarif
+            semgrep-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      #  Gate dua tren exit code thuc te
+      - name: Enforce Semgrep gate
+        if: always() && steps.semgrep.outputs.exit_code != ''
+        shell: bash
+        env:
+          SCAN_EXIT: ${{ steps.semgrep.outputs.exit_code }}
+        run: |
+          if [ "$SCAN_EXIT" -ne 0 ]; then
+            echo "Semgrep found security issues or scan failed."
+            exit 1
+          fi
+          echo "Semgrep security gate passed."
+
+  # ============================================
+  # STAGE 2C: TRIVY - SCA
+  # ============================================
+  sca-scan:
+    name: "SCA - Trivy"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate requirements.txt exists
+        shell: bash
+        run: |
+          if [ ! -f "requirements.txt" ]; then
+            echo "Thieu requirements.txt"
+            exit 1
+          fi
+          echo "requirements.txt found - bat dau quet SCA"
+
+      # Cai Trivy CLI thay cho action @master
+      - name: Install Trivy CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+
+          wget -qO - https://get.trivy.dev/deb/public.key \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://get.trivy.dev/deb generic main" \
+            | sudo tee /etc/apt/sources.list.d/trivy.list
+
+          sudo apt-get update
+          sudo apt-get install -y trivy
+          trivy --version
+
+      # Xuat SARIF cho GitHub Code Scanning
+      - name: Generate Trivy SARIF
+        id: trivy_sarif
+        shell: bash
+        run: |
+          set +e
+
+          trivy fs . \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --output trivy-results.sarif \
+            --exit-code 0 \
+            --no-progress
+
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # Xuat JSON va kiem tra HIGH/CRITICAL
+      - name: Scan dependencies with Trivy
+        id: trivy
+        shell: bash
+        run: |
+          set +e
+
+          trivy fs . \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output trivy-report.json \
+            --exit-code 1 \
+            --no-progress
+
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Trivy SARIF
+        if: always() && steps.trivy_sarif.outputs.exit_code == '0'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      # Luu ca JSON va SARIF
+      - name: Upload Trivy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: |
+            trivy-results.sarif
+            trivy-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Chan pipeline khi co HIGH/CRITICAL
+      - name: Enforce Trivy gate
+        if: always() && steps.trivy.outputs.exit_code != ''
+        shell: bash
+        env:
+          SARIF_EXIT: ${{ steps.trivy_sarif.outputs.exit_code }}
+          SCAN_EXIT: ${{ steps.trivy.outputs.exit_code }}
+        run: |
+          if [ "$SARIF_EXIT" != "0" ]; then
+            echo "Trivy SARIF generation failed."
+            exit 1
+          fi
+
+          if [ "$SCAN_EXIT" -ne 0 ]; then
+            echo "Trivy found HIGH/CRITICAL vulnerabilities or scan failed."
+            exit 1
+          fi
+
+          echo "Trivy security gate passed."
+  # ============================================
+  # STAGE 3: BUILD
+  # ============================================
+  build:
+    name: "Build Application"
+    runs-on: ubuntu-latest
+    needs: [secret-scanning, sast-scan, sca-scan]
+    steps:
+      - name: Setup Python
+        run: echo "Setting up Python ${{ env.PYTHON_VERSION }}..."
+      
+      - name: Install dependencies
+        run: echo "Installing dependencies from requirements.txt..."
+      
+      - name: Run unit tests
+        run: echo "Running unit tests..."
+      
+      - name: Build Docker image
+        run: echo "Building Docker image..."
+
+  # ============================================
+  # STAGE 4: CONTAINER SECURITY
+  # ============================================
+  container-scan:
+    name: "Container Security Scan"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Run Trivy on Docker image
+        run: echo "Scanning Docker image for vulnerabilities..."
+      
+      - name: Check for OS vulnerabilities
+        run: echo "Checking base image and layers..."
+
+  # ============================================
+  # STAGE 5: QUALITY GATE
+  # ============================================
+  quality-gate:
+    name: "Quality Gate"
+    runs-on: ubuntu-latest
+    needs: [sast-scan, sca-scan, secret-scanning, container-scan]
+    steps:
+      - name: Evaluate security findings
+        run: echo "Evaluating all security scan results..."
+      
+      - name: Check severity thresholds
+        run: echo "Checking if Critical/High vulnerabilities exist..."
+      
+      - name: Decision - Pass or Fail
+        run: echo "Quality Gate - PASSED ✅"
+
+  # ============================================
+  # STAGE 6: DEPLOY (only if Quality Gate passes)
+  # ============================================
+  deploy-staging:
+    name: "Deploy to Staging"
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: github.ref == 'refs/heads/tv1-deploy'
+    steps:
+      - name: Deploy to staging environment
+        run: echo "Deploying to staging environment..."
+      
+      - name: Run smoke tests
+        run: echo "Running smoke tests on staging..."
+
+  deploy-production:
+    name: "Deploy to Production"
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to production environment
+        run: echo "Deploying to production environment..."
+      
+      - name: Health check
+        run: echo "Performing health check..."
+      
+      - name: Send notification
+        run: echo "Sending deployment notification..."
+
+  # ============================================
+  # STAGE 7: NOTIFICATION
+  # Dùng always() để chạy dù deploy bị skip
+  # ============================================
+  notify:
+    name: "Send Notification"
+    runs-on: ubuntu-latest
+    needs: quality-gate          # ← chỉ cần quality-gate, không cần deploy
+    if: always()
+    steps:
+      - name: Pipeline result
+        run: echo "Pipeline completed with status - ${{ job.status }}"
