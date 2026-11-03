@@ -166,7 +166,7 @@ jobs:
             output: trivy-image.json
 
         # quet container lan 2 chan cac muc lo hong HIGH hoac CRITICAL
-        - name: Gate Container
+        - name: gate-container
           uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
           with: 
             image-ref: ${{ env.IMAGE }}
@@ -194,7 +194,7 @@ jobs:
         run: echo "Deploying to production environment..."
 
 
- # STAGE 5 NOTIFICATION
+ #  STAGE 5 NOTIFICATION
   notify:
     name: "Stage 6 · Notification"
     runs-on: ubuntu-latest
