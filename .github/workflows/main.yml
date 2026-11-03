@@ -15,7 +15,7 @@ env:
 
 jobs:
     # =========================================================
-  # TV2 - SECRET SCANNING
+  # SECRET SCANNING
   # =========================================================
   secret-scanning:
     name: "Secret Scanning"
@@ -60,7 +60,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # =========================================================
-  # TV2 - SAST: QUÉT MÃ NGUỒN TRONG TOÀN REPOSITORY
+  # SAST: QUÉT MÃ NGUỒN TRONG TOÀN REPOSITORY
   # =========================================================
   sast-scan:
     name: "SAST - Static Code Analysis"
@@ -234,7 +234,7 @@ jobs:
           retention-days: 14
 
   # =========================================================
-  # TV2 - SCA: TỰ NHẬN DIỆN DEPENDENCY TRONG REPOSITORY
+  # SCA: TỰ NHẬN DIỆN DEPENDENCY TRONG REPOSITORY
   # =========================================================
   sca-scan:
     name: "SCA - Dependency Check"
