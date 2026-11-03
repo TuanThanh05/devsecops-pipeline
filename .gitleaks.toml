@@ -1,4 +1,0 @@
-title = "DevSecOps Gitleaks Configuration"
-
-[extend]
-useDefault = true
