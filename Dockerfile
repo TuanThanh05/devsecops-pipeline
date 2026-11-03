@@ -6,6 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
 COPY requirements.txt .
+
+# nang cap cac goi cong cu trong base image
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
 # cai cac goi phu thuoc
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
