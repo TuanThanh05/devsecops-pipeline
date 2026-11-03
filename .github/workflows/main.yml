@@ -7,9 +7,11 @@ on:
     branches: [ main, dev-project, tv1-deploy, tv2-deploy, tv3-deploy ]
   pull_request:
     branches: [ main, dev-project, tv1-deploy, tv2-deploy, tv3-deploy ]
+  workflow_dispatch:
 
 env:
   PYTHON_VERSION: '3.11'
+  GATE_SEVERITY: HIGH,CRITICAL
 
 jobs:
   secret-scanning:
@@ -154,7 +156,7 @@ jobs:
           run: test "$(docker run --rm "$IMAGE" whoami)" = "appuser"
       
         # quet container lan 1 lay bao cao tong the
-        - name: First Scan Container By Trivy
+        - name: Scan Container By Trivy
           uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
           with: 
             image-ref: ${{ env.IMAGE }}
@@ -164,80 +166,45 @@ jobs:
             output: trivy-image.json
 
         # quet container lan 2 chan cac muc lo hong HIGH hoac CRITICAL
-        - name: Second Scan Container By Trivy
+        - name: Gate Container
           uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
           with: 
             image-ref: ${{ env.IMAGE }}
-            severity: HIGH,CRITICAL
+            severity: ${{ env.GATE_SEVERITY }}
             ignore-unfixed: true
             exit-code: '1'
             format: table
 
         # luu bao cao
-        - name: Scan Report
+        - name: Container Scan Report
           if: always()  
           uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
           with:
-            name: trivy-image-report
+            name: container-scan-report 
             path: trivy-image.json
 
-
-  # ============================================
-  # STAGE 5: QUALITY GATE
-  # ============================================
-  quality-gate:
-    name: "Quality Gate"
-    runs-on: ubuntu-latest
-    needs: [sast-scan, sca-scan, secret-scanning, container-scan]
-    steps:
-      - name: Evaluate security findings
-        run: echo "Evaluating all security scan results..."
-      
-      - name: Check severity thresholds
-        run: echo "Checking if Critical/High vulnerabilities exist..."
-      
-      - name: Decision - Pass or Fail
-        run: echo "Quality Gate - PASSED ✅"
-
-  # ============================================
-  # STAGE 6: DEPLOY (only if Quality Gate passes)
-  # ============================================
-  deploy-staging:
-    name: "Deploy to Staging"
-    runs-on: ubuntu-latest
-    needs: quality-gate
-    if: github.ref == 'refs/heads/tv1-deploy'
-    steps:
-      - name: Deploy to staging environment
-        run: echo "Deploying to staging environment..."
-      
-      - name: Run smoke tests
-        run: echo "Running smoke tests on staging..."
-
+  # STAGE 4 DEPLOY PRODUCTION
   deploy-production:
     name: "Deploy to Production"
     runs-on: ubuntu-latest
-    needs: quality-gate
-    if: github.ref == 'refs/heads/main'
+    needs: [secret-scanning, sast-scan, sca-scan, container-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Deploy to production environment
         run: echo "Deploying to production environment..."
-      
-      - name: Health check
-        run: echo "Performing health check..."
-      
-      - name: Send notification
-        run: echo "Sending deployment notification..."
 
-  # ============================================
-  # STAGE 7: NOTIFICATION
-  # Dùng always() để chạy dù deploy bị skip
-  # ============================================
+
+ # STAGE 5 NOTIFICATION
   notify:
-    name: "Send Notification"
+    name: "Stage 6 · Notification"
     runs-on: ubuntu-latest
-    needs: quality-gate          # ← chỉ cần quality-gate, không cần deploy
+    needs: [secret-scanning, sast-scan, sca-scan, container-scan, deploy-production]
     if: always()
     steps:
       - name: Pipeline result
-        run: echo "Pipeline completed with status - ${{ job.status }}"
+        run: |
+          echo "Secret Scan   : ${{ needs.secret-scanning.result }}"
+          echo "SAST          : ${{ needs.sast-scan.result }}"
+          echo "SCA           : ${{ needs.sca-scan.result }}"
+          echo "Container Scan: ${{ needs.container-scan.result }}"
+          echo "Deploy        : ${{ needs.deploy-production.result }}"
