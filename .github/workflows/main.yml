@@ -178,7 +178,7 @@ jobs:
         # luu bao cao
         - name: Container Scan Report
           if: always()  
-          uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+          uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
           with:
             name: container-scan-report 
             path: trivy-image.json
@@ -194,7 +194,7 @@ jobs:
         run: echo "Deploying to production environment..."
 
 
- #  STAGE 5 NOTIFICATION
+  # STAGE 5 NOTIFICATION
   notify:
     name: "Notification"
     runs-on: ubuntu-latest
@@ -232,8 +232,8 @@ jobs:
             Security alert, deploy blocked
 
             Pushed by : ${{ github.actor }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
+            Branch    : ${{ github.ref_name }}
+            Commit    : ${{ github.sha }}
 
             Reports:
               Secret Scan    : ${{ needs.secret-scanning.result }}
@@ -265,9 +265,9 @@ jobs:
           body: |
             Deployment successful.
 
-            Pushed by: ${{ github.actor }}
-            Branch: ${{ github.ref_name }}
-            Commit     : ${{ github.sha }}
+            Pushed by : ${{ github.actor }}
+            Branch    : ${{ github.ref_name }}
+            Commit    : ${{ github.sha }}
 
             View details:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
