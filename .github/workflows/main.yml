@@ -233,7 +233,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # STAGE 2c SCA SCAN DEPENDENCY CHECK
+  # quet thanh phan phu thuoc
   sca-scan:
     name: "Software Composition Analysis"
     runs-on: ubuntu-latest
@@ -271,9 +271,8 @@ jobs:
       # quet bao cao va chan
       - name: gate-sca
         run: |
-          python3 scripts/trivy_gate.py \
-            --report "$REPORT_DIR/trivy-fs.json" \
-            --title "Stage 2 · SCA / Trivy filesystem"
+          python3 scripts/sca_gate.py \
+            --report "$REPORT_DIR/trivy-fs.json"
 
       # luu bao cao
       - name: Upload SCA Report
@@ -285,7 +284,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # STAGE 3 DOCKER BUILD AND SCAN CONTAINER
+  # dung va quet anh dong goi
   container-scan:
     name: "Build And Scan Container"
     runs-on: ubuntu-latest
@@ -345,9 +344,8 @@ jobs:
       # cong quet bao cao va chan
       - name: gate-container
         run: |
-          python3 scripts/trivy_gate.py \
-            --report "$REPORT_DIR/trivy-image.json" \
-            --title "Stage 3 · Container Scan / Trivy image"
+          python3 scripts/container_gate.py \
+            --report "$REPORT_DIR/trivy-image.json"
 
 
       # luu bao cao

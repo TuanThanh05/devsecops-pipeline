@@ -1,9 +1,0 @@
-{
-  "Results": [
-    {
-      "Target": "requirements.txt",
-      "Packages": [{"Name": "flask"}],
-      "Vulnerabilities": null
-    }
-  ]
-}
