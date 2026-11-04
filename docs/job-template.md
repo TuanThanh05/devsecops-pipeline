@@ -1,3 +1,4 @@
+``` yaml  
   <tên-job>:
     name: "<Tên hiển thị>"
     runs-on: ubuntu-latest
@@ -23,3 +24,4 @@
         with:
           name: <tên-job>-report
           path: <tên file báo cáo>
+```
