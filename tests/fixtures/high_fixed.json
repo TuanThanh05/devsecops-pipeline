@@ -1,0 +1,18 @@
+{
+  "Results": [
+    {
+      "Target": "requirements.txt",
+      "Packages": [{"Name": "setuptools"}],
+      "Vulnerabilities": [
+        {
+          "PkgName": "setuptools",
+          "VulnerabilityID": "CVE-2000-0002",
+          "Severity": "HIGH",
+          "InstalledVersion": "70.0.0",
+          "FixedVersion": "78.1.1",
+          "Status": "fixed"
+        }
+      ]
+    }
+  ]
+}

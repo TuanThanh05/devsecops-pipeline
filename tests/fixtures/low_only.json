@@ -1,0 +1,18 @@
+{
+  "Results": [
+    {
+      "Target": "requirements.txt",
+      "Packages": [{"Name": "flask"}, {"Name": "requests"}],
+      "Vulnerabilities": [
+        {
+          "PkgName": "requests",
+          "VulnerabilityID": "CVE-2000-0001",
+          "Severity": "LOW",
+          "InstalledVersion": "2.0.0",
+          "FixedVersion": "2.1.0",
+          "Status": "fixed"
+        }
+      ]
+    }
+  ]
+}
