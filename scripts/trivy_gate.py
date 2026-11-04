@@ -1,22 +1,3 @@
-"""cong chan dung chung cho sca va container scan (bao cao json cua trivy).
-
-doc bao cao trivy, phan loai lo hong theo muc xet va theo ban va, ghi bang len
-trang summary, ghi gate-result.json canh file bao cao, roi quyet dinh cho qua
-hay chan.
-
-cach goi:
-  python3 scripts/trivy_gate.py --report <file json> --title "<tieu de summary>"
-
-bien moi truong:
-  GATE_SEVERITY        bat buoc, cac muc bi xet, vi du "HIGH,CRITICAL"
-  BLOCK_UNFIXED        "true": chan ca loi chua co ban va
-                       gia tri khac (mac dinh): loi chua co ban va chi canh bao
-  GITHUB_STEP_SUMMARY  file summary do github cap
-
-trang thai va exit code:
-  PASS / PASS_WITH_WARNINGS -> 0
-  BLOCKED / ERROR           -> 1
-"""
 import argparse
 import json
 import os
@@ -46,11 +27,11 @@ def write_summary(lines):
         with open(summary_path, "a", encoding="utf-8") as summary:
             summary.write("\n".join(lines) + "\n")
     except OSError as exc:
-        fail(f"khong ghi duoc summary: {exc}")
+        fail(f"cannot write summary: {exc}")
 
 
 def is_valid_result(result):
-    # moi muc trong Results phai la object, Packages va Vulnerabilities la danh sach object
+    # moi muc trong results phai la object, packages va vulnerabilities la danh sach object
     if not isinstance(result, dict):
         return False
     for key in ("Packages", "Vulnerabilities"):
@@ -61,12 +42,12 @@ def is_valid_result(result):
 
 
 def severity_of(vuln):
-    # thieu severity thi coi la UNKNOWN
+    # thieu severity thi coi la unknown
     return str(vuln.get("Severity") or "UNKNOWN").upper()
 
 
 def has_fix(vuln):
-    # co ban va khi va chi khi FixedVersion khac rong
+    # co ban va khi va chi khi truong phien ban va khac rong
     return bool(vuln.get("FixedVersion"))
 
 
@@ -78,21 +59,21 @@ def detail_table(vulns):
         for v in vulns[:MAX_ROWS]
     ]
     if len(vulns) > MAX_ROWS:
-        rows.append(f"| ... con {len(vulns) - MAX_ROWS} dong, xem artifact | | | | | |")
+        rows.append(f"| ... | {len(vulns) - MAX_ROWS} more rows, see artifact | | | | |")
     return DETAIL_HEADER + rows
 
 
-# ---------- 1. doc tham so va cau hinh ----------
-parser = argparse.ArgumentParser(description="cong chan cho bao cao json cua trivy")
-parser.add_argument("--report", required=True, help="file json do trivy xuat")
-parser.add_argument("--title", required=True, help="tieu de bang tren trang summary")
+# 1. doc tham so va cau hinh
+parser = argparse.ArgumentParser(description="quality gate for Trivy JSON reports")
+parser.add_argument("--report", required=True, help="JSON file produced by Trivy")
+parser.add_argument("--title", required=True, help="table title on the job Summary")
 args = parser.parse_args()
 report_path = Path(args.report)
 
 raw_severity = os.environ.get("GATE_SEVERITY", "")
 gate_levels = {s.strip().upper() for s in raw_severity.split(",") if s.strip()}
 if not gate_levels or not gate_levels <= set(LEVELS):
-    reason = f"GATE_SEVERITY khong hop le: {raw_severity!r}"
+    reason = f"GATE_SEVERITY is invalid: {raw_severity!r}"
     write_summary([f"## {args.title}", "", f"**Quality Gate: ERROR** - {reason}"])
     fail(reason)
 gate_order = [level for level in LEVELS if level in gate_levels]
@@ -100,25 +81,27 @@ gate_order = [level for level in LEVELS if level in gate_levels]
 # chi dung "true" moi chan loi chua co ban va
 block_unfixed = os.environ.get("BLOCK_UNFIXED", "false").strip().lower() == "true"
 
-# ---------- 2. doc bao cao ----------
+# 2. doc bao cao
 # khong doc duoc bao cao thi khong duoc coi la sach
 reason = None
 try:
     data = json.loads(report_path.read_text(encoding="utf-8"))
 except OSError as exc:
-    reason = f"khong doc duoc file {report_path} ({exc.strerror})"
+    reason = f"{report_path}: {exc.strerror}"
 except ValueError:
-    reason = f"file {report_path} khong phai json hop le"
+    reason = f"{report_path}: not valid JSON"
 else:
     results = data.get("Results") if isinstance(data, dict) else None
     if not isinstance(results, list) or not all(is_valid_result(r) for r in results):
-        reason = f"truong Results trong {report_path.name} khong hop le"
+        reason = f"{report_path.name}: Results is missing or malformed"
 
 if reason:
-    write_summary([f"## {args.title}", "", f"**Quality Gate: ERROR** - {reason}"])
-    fail(reason)
+    write_summary([
+        f"## {args.title}", "", f"**Quality Gate: ERROR** - cannot read report ({reason})"
+    ])
+    fail(f"cannot read report ({reason})")
 
-# ---------- 3. phan loai ----------
+# 3. phan loai
 all_vulns = [v for r in results for v in (r.get("Vulnerabilities") or [])]
 packages = [p for r in results for p in (r.get("Packages") or [])]
 counts = Counter(severity_of(v) for v in all_vulns)
@@ -143,30 +126,30 @@ elif warning:
 else:
     status = "PASS"
 
-# ---------- 4. ghi bao cao ----------
+# 4. ghi bao cao
 lines = [
     f"## {args.title}",
     "",
-    "| Noi dung | Ket qua |",
+    "| Item | Result |",
     "|---|---|",
     f"| Quality Gate | {status} |",
-    f"| Muc xet | {', '.join(gate_order)} |",
-    f"| Loi chua co ban va | {'CHAN' if block_unfixed else 'CANH BAO, khong chan'} |",
-    f"| So goi phat hien | {len(packages)} |",
-    f"| Tong lo hong (moi muc) | {len(all_vulns)} |",
-    f"| Muc xet - da co ban va | {len(fixed)} |",
-    f"| Muc xet - chua co ban va | {len(unfixed)} |",
-    f"| Bi chan | {len(blocking)} |",
-    f"| Canh bao | {len(warning)} |",
+    f"| Gate severity | {', '.join(gate_order)} |",
+    f"| Unfixed vulnerabilities | {'BLOCK' if block_unfixed else 'WARN (not blocking)'} |",
+    f"| Packages detected | {len(packages)} |",
+    f"| Total vulnerabilities (all severities) | {len(all_vulns)} |",
+    f"| In gate - fix available | {len(fixed)} |",
+    f"| In gate - no fix available | {len(unfixed)} |",
+    f"| Blocked | {len(blocking)} |",
+    f"| Warnings | {len(warning)} |",
     "",
-    "| Severity | So luong |",
+    "| Severity | Count |",
     "|---|---|",
 ]
 lines += [f"| {level} | {counts.get(level, 0)} |" for level in LEVELS]
 if blocking:
-    lines += ["", "### Lo hong bi chan", ""] + detail_table(blocking)
+    lines += ["", "### Blocked vulnerabilities", ""] + detail_table(blocking)
 if warning:
-    lines += ["", "### Canh bao - chua co ban va (khong chan, can theo doi)", ""]
+    lines += ["", "### Warnings - no fix available (not blocking, monitor)", ""]
     lines += detail_table(warning)
 write_summary(lines)
 
@@ -189,15 +172,15 @@ try:
         json.dumps(gate_result, indent=2) + "\n", encoding="utf-8"
     )
 except OSError as exc:
-    fail(f"khong ghi duoc gate-result.json: {exc}")
+    fail(f"cannot write gate-result.json: {exc}")
 
-# ---------- 5. quyet dinh ----------
+# 5. quyet dinh
 for v in warning:
     print(f"::warning::{v.get('PkgName')} {v.get('VulnerabilityID')} "
-          f"({severity_of(v)}) chua co ban va")
+          f"({severity_of(v)}) has no fix available")
 
 if status == "ERROR":
-    fail(f"{args.title}: khong phat hien goi nao, khong the coi la sach")
+    fail(f"{args.title}: no packages detected, report cannot be treated as clean")
 if status == "BLOCKED":
-    fail(f"{args.title}: {len(blocking)} lo hong muc {', '.join(gate_order)} bi chan")
+    fail(f"{args.title}: blocked ({len(blocking)} blocking at {', '.join(gate_order)})")
 print(f"{args.title}: {status}")
