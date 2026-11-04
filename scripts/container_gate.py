@@ -1,4 +1,4 @@
-# ---------- 1. doc tham so va cau hinh ----------
+# 1. doc tham so va cau hinh
 import argparse
 import json
 import os
@@ -37,7 +37,7 @@ def read_config():
     return Path(args.report), gate_order, block_unfixed
 
 
-# ---------- 2. doc bao cao ----------
+# 2. doc bao cao
 def is_valid_result(result):
     # moi muc phai la doi tuong, goi va lo hong phai la danh sach doi tuong
     if not isinstance(result, dict):
@@ -80,7 +80,7 @@ def report_details(data):
     return {"image": data.get("ArtifactName") or "-", "base_os": base_os or "-"}
 
 
-# ---------- 3. phan loai ----------
+# 3. phan loai
 def severity_of(vuln):
     # thieu muc do thi coi la khong ro
     return str(vuln.get("Severity") or "UNKNOWN").upper()
@@ -132,7 +132,7 @@ def classify(results, gate_order, block_unfixed):
     }
 
 
-# ---------- 4. ghi bao cao ----------
+# 4. ghi bao cao
 def write_summary(lines):
     # chay tren may ca nhan thi khong co file tom tat, bo qua
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -232,7 +232,7 @@ def write_gate_result(report_path, status, stats, gate_order, block_unfixed, det
         fail(f"cannot write gate-result.json: {exc}")
 
 
-# ---------- 5. quyet dinh ----------
+# 5. quyet dinh
 def gate_status(stats):
     # quet ra khong goi thi khong duoc coi la sach
     if not stats["packages"]:
