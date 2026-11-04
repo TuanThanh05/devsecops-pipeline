@@ -36,12 +36,11 @@ jobs:
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Chỉ bắt buộc với repository thuộc Organization.
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
           GITLEAKS_ENABLE_COMMENTS: "false"
           GITLEAKS_ENABLE_SUMMARY: "true"
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
-
+      # Ghi Summary
       - name: Secret scanning summary
         if: always()
         env:
@@ -49,18 +48,18 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## TV2 - Secret Scanning"
+            echo "Secret Scanning"
             echo ""
-            echo "| Nội dung | Kết quả |"
+            echo "| Noi dung | Ket qua |"
             echo "|---|---|"
-            echo "| Công cụ | Gitleaks |"
-            echo "| Trạng thái bước quét | $SCAN_RESULT |"
-            echo "| Chính sách | Chặn khi phát hiện secret hoặc scanner lỗi |"
-            echo "| Báo cáo | Artifact SARIF do Gitleaks Action quản lý |"
+            echo "| Cong cu | Gitleaks |"
+            echo "| Trang thai buoc quet | $SCAN_RESULT |"
+            echo "| Chinh sach | Chan khi phat hien secret hoac scanner loi |"
+            echo "| Bao cao | Artifact SARIF do Gitleaks Action quan ly |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # =========================================================
-  # SAST: QUÉT MÃ NGUỒN TRONG TOÀN REPOSITORY
+  # SAST (STATIC APPLICATION SECURITY TESTING): QUET MA NGUON TRONG TOAN REPOSITORY
   # =========================================================
   sast-scan:
     name: "SAST - Static Code Analysis"
@@ -99,8 +98,7 @@ jobs:
         run: |
           scan_exit=0
 
-          # Quét mã nguồn toàn repository, ngoại trừ workflow chính.
-          # Bảo mật file workflow được theo dõi riêng bởi TV1.
+          # Quet ma nguon toan repository, ngoai tru workflow chinh.
           semgrep scan \
             --config p/security-audit \
             --config p/owasp-top-ten \
@@ -114,11 +112,11 @@ jobs:
           echo "$scan_exit" > "$REPORT_DIR/semgrep-exit-code.txt"
 
           {
-            echo "### Phạm vi SAST"
+            echo "### Pham vi SAST"
             echo ""
-            echo "Quét mã nguồn được hỗ trợ trong toàn repository."
-            echo "Ngoại lệ: .github/workflows/main.yml."
-            echo "File workflow cần được TV1 kiểm tra bảo mật riêng."
+            echo "Quet ma nguon đuoc ho tro trong toan repository."
+            echo "Ngoai le: .github/workflows/main.yml."
+            echo "File workflow can đuoc TV1 kiem tra bao mat rieng."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Evaluate SAST quality gate
@@ -163,13 +161,13 @@ jobs:
                   metadata.get("severity") or ""
               ).upper()
 
-              # Metadata mức độ được ưu tiên nếu nhận diện được.
+              # Metadata muc đo đuoc uu tien neu nhan dien đuoc.
               if impact in {"HIGH", "CRITICAL"}:
                   return True
               if impact in {"LOW", "MEDIUM", "MODERATE", "INFO"}:
                   return False
 
-              # Quy ước dự phòng của nhóm khi thiếu metadata.
+              # Quy uoc du phong cua nhom khi thieu metadata.
               return str(extra.get("severity", "")).upper() == "ERROR"
 
           blocking = [f for f in findings if blocks_gate(f)]
@@ -178,26 +176,31 @@ jobs:
               for f in findings
           )
 
-          # Lỗi scanner hoặc không phân tích được file nào không được coi là sạch.
+          # Loi scanner hoac khong phan tich đuoc file nao khong đuoc coi la sach.
           scan_error = scanner_exit != 0 or bool(errors) or not scanned
-          status = "ERROR" if scan_error else "BLOCKED" if blocking else "PASS"
+          if scan_error:
+              status = "ERROR"
+          elif blocking:
+              status = "BLOCKED"
+          else:
+              status = "PASS"
 
           lines = [
               "## TV2 - SAST / Semgrep",
               "",
-              "| Nội dung | Kết quả |",
+              "| Noi dung | Ket qua |",
               "|---|---|",
               f"| Quality Gate | {status} |",
-              f"| File đã phân tích | {len(scanned)} |",
-              f"| Mục bỏ qua được ghi trong JSON | {len(skipped)} |",
-              f"| Tổng finding | {len(findings)} |",
-              f"| Finding bị chặn | {len(blocking)} |",
-              f"| Lỗi phân tích | {len(errors)} |",
+              f"| File đa phan tich | {len(scanned)} |",
+              f"| Mcc bo qua đuoc ghi trong JSON | {len(skipped)} |",
+              f"| Tong finding | {len(findings)} |",
+              f"| Finding bi chan | {len(blocking)} |",
+              f"| Loi phan tich | {len(errors)} |",
               f"| Exit code scanner | {scanner_exit} |",
               "",
-              "### Finding theo severity của rule",
+              "### Finding theo severity cua rule",
               "",
-              "| Severity | Số lượng |",
+              "| Severity | So luong |",
               "|---|---|",
           ]
           lines += [f"| {key} | {value} |" for key, value in sorted(counts.items())]
@@ -224,6 +227,7 @@ jobs:
               sys.exit(1)
           PY
 
+      # Upload bao cao khi gate ket thuc
       - name: Upload SAST reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
