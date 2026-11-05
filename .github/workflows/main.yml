@@ -14,16 +14,17 @@ env:
   GATE_SEVERITY: HIGH,CRITICAL
 
 jobs:
-    # =========================================================
+  # =========================================================
   # SECRET SCANNING
   # =========================================================
   secret-scanning:
     name: "Secret Scanning"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
       contents: read
-
+    
+    # Lay ma nguon
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -31,45 +32,44 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Run Gitleaks
+      #chuan bi Python
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Quet va chan
+      - name: SECRET SCANNING by Gitleaks
         id: gitleaks
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Chỉ bắt buộc với repository thuộc Organization.
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
           GITLEAKS_ENABLE_COMMENTS: "false"
           GITLEAKS_ENABLE_SUMMARY: "true"
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
-
-      - name: Secret scanning summary
+      
+      # Ghi Summary
+      - name: Secret scanning Scan Report
         if: always()
         env:
           SCAN_RESULT: ${{ steps.gitleaks.outcome }}
         shell: bash
-        run: |
-          {
-            echo "## TV2 - Secret Scanning"
-            echo ""
-            echo "| Nội dung | Kết quả |"
-            echo "|---|---|"
-            echo "| Công cụ | Gitleaks |"
-            echo "| Trạng thái bước quét | $SCAN_RESULT |"
-            echo "| Chính sách | Chặn khi phát hiện secret hoặc scanner lỗi |"
-            echo "| Báo cáo | Artifact SARIF do Gitleaks Action quản lý |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python scripts/security/secret_summary.py
 
   # =========================================================
-  # SAST: QUÉT MÃ NGUỒN TRONG TOÀN REPOSITORY
+  # SAST (STATIC APPLICATION SECURITY TESTING): QUET MA NGUON TRONG TOAN REPOSITORY
   # =========================================================
   sast-scan:
     name: "SAST - Static Code Analysis"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     permissions:
       contents: read
 
     steps:
+
+      # Chuẩn bị
       - name: Checkout code
         uses: actions/checkout@v6
         with:
@@ -79,28 +79,30 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
+      
+      # Chuan bi thu muc bao cao
       - name: Prepare reports
         shell: bash
         run: |
-          report_dir="$RUNNER_TEMP/tv2-sast-reports"
+          report_dir="$RUNNER_TEMP/sast-reports"
           mkdir -p "$report_dir"
           echo "REPORT_DIR=$report_dir" >> "$GITHUB_ENV"
-
+      
+      # Cai Semgrep
       - name: Install Semgrep
         shell: bash
         run: |
           python -m pip install --disable-pip-version-check semgrep
           semgrep --version > "$REPORT_DIR/semgrep-version.txt"
-
-      - name: Scan repository with Semgrep
+      
+      # SAST chay quet
+      - name: Scan SAST by Semgrep
         id: semgrep
         shell: bash
         run: |
           scan_exit=0
 
-          # Quét mã nguồn toàn repository, ngoại trừ workflow chính.
-          # Bảo mật file workflow được theo dõi riêng bởi TV1.
+          # Quet ma nguon toan repository, ngoai tru workflow chinh.
           semgrep scan \
             --config p/security-audit \
             --config p/owasp-top-ten \
@@ -114,121 +116,23 @@ jobs:
           echo "$scan_exit" > "$REPORT_DIR/semgrep-exit-code.txt"
 
           {
-            echo "### Phạm vi SAST"
+            echo "### Pham vi SAST"
             echo ""
-            echo "Quét mã nguồn được hỗ trợ trong toàn repository."
-            echo "Ngoại lệ: .github/workflows/main.yml."
-            echo "File workflow cần được TV1 kiểm tra bảo mật riêng."
+            echo "Quet ma nguon đuoc ho tro trong toan repository."
+            echo "Ngoai le: .github/workflows/main.yml."
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Evaluate SAST quality gate
+      
+      # danh gia gate
+      - name: gate-SAST
         shell: bash
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import sys
-          from collections import Counter
-          from pathlib import Path
+        run: python scripts/security/sast_gate.py
 
-          reports = Path(os.environ["REPORT_DIR"])
-          report_file = reports / "semgrep.json"
-          exit_file = reports / "semgrep-exit-code.txt"
-
-          try:
-              scanner_exit = int(exit_file.read_text().strip())
-              data = json.loads(report_file.read_text())
-              if not isinstance(data, dict):
-                  raise ValueError("JSON root must be an object")
-              if not isinstance(data.get("results"), list):
-                  raise ValueError("Missing or invalid results")
-          except Exception as exc:
-              print(f"::error::Semgrep report is missing or invalid: {exc}")
-              sys.exit(1)
-
-          findings = data["results"]
-          errors = data.get("errors", [])
-          paths = data.get("paths", {})
-          scanned = paths.get("scanned", [])
-          skipped = paths.get("skipped", [])
-
-          def blocks_gate(finding):
-              extra = finding.get("extra", {})
-              metadata = extra.get("metadata", {})
-              if not isinstance(metadata, dict):
-                  metadata = {}
-
-              impact = str(
-                  metadata.get("impact") or
-                  metadata.get("severity") or ""
-              ).upper()
-
-              # Metadata mức độ được ưu tiên nếu nhận diện được.
-              if impact in {"HIGH", "CRITICAL"}:
-                  return True
-              if impact in {"LOW", "MEDIUM", "MODERATE", "INFO"}:
-                  return False
-
-              # Quy ước dự phòng của nhóm khi thiếu metadata.
-              return str(extra.get("severity", "")).upper() == "ERROR"
-
-          blocking = [f for f in findings if blocks_gate(f)]
-          counts = Counter(
-              str(f.get("extra", {}).get("severity", "UNKNOWN")).upper()
-              for f in findings
-          )
-
-          # Lỗi scanner hoặc không phân tích được file nào không được coi là sạch.
-          scan_error = scanner_exit != 0 or bool(errors) or not scanned
-          status = "ERROR" if scan_error else "BLOCKED" if blocking else "PASS"
-
-          lines = [
-              "## TV2 - SAST / Semgrep",
-              "",
-              "| Nội dung | Kết quả |",
-              "|---|---|",
-              f"| Quality Gate | {status} |",
-              f"| File đã phân tích | {len(scanned)} |",
-              f"| Mục bỏ qua được ghi trong JSON | {len(skipped)} |",
-              f"| Tổng finding | {len(findings)} |",
-              f"| Finding bị chặn | {len(blocking)} |",
-              f"| Lỗi phân tích | {len(errors)} |",
-              f"| Exit code scanner | {scanner_exit} |",
-              "",
-              "### Finding theo severity của rule",
-              "",
-              "| Severity | Số lượng |",
-              "|---|---|",
-          ]
-          lines += [f"| {key} | {value} |" for key, value in sorted(counts.items())]
-
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("\n".join(lines) + "\n")
-
-          (reports / "gate-result.json").write_text(
-              json.dumps({
-                  "status": status,
-                  "scanned_files": len(scanned),
-                  "findings": len(findings),
-                  "blocking_findings": len(blocking),
-                  "scanner_exit_code": scanner_exit,
-                  "analysis_errors": len(errors),
-              }, indent=2)
-          )
-
-          if scan_error:
-              print("::error::Semgrep failed or scan coverage is incomplete.")
-              sys.exit(1)
-          if blocking:
-              print("::error::SAST quality gate blocked deployment.")
-              sys.exit(1)
-          PY
-
-      - name: Upload SAST reports
+      # Upload bao cao khi gate ket thuc
+      - name: SAST Scan Reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tv2-sast-reports
+          name: sast-reports
           path: ${{ env.REPORT_DIR }}/
           if-no-files-found: error
           retention-days: 14
