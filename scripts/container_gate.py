@@ -6,7 +6,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-TITLE = "Container Scan Report (Trivy)"
+TITLE = "Container Image Scan Report (Trivy)"
 LEVELS = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
 MAX_ROWS = 30
 DETAIL_HEADER = [
