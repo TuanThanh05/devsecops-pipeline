@@ -20,10 +20,11 @@ jobs:
   secret-scanning:
     name: "Secret Scanning"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
       contents: read
-
+    
+    # Lay ma nguon
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -31,12 +32,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      #chuan bi Python
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Run Gitleaks
+      # Quet va chan
+      - name: SECRET SCANNING by Gitleaks
         id: gitleaks
         uses: gitleaks/gitleaks-action@v3
         env:
@@ -45,8 +48,9 @@ jobs:
           GITLEAKS_ENABLE_COMMENTS: "false"
           GITLEAKS_ENABLE_SUMMARY: "true"
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+      
       # Ghi Summary
-      - name: Secret scanning summary
+      - name: Secret scanning Scan Report
         if: always()
         env:
           SCAN_RESULT: ${{ steps.gitleaks.outcome }}
@@ -59,11 +63,13 @@ jobs:
   sast-scan:
     name: "SAST - Static Code Analysis"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     permissions:
       contents: read
 
     steps:
+
+      # Chuẩn bị
       - name: Checkout code
         uses: actions/checkout@v6
         with:
@@ -73,21 +79,24 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
+      
+      # Chuan bi thu muc bao cao
       - name: Prepare reports
         shell: bash
         run: |
-          report_dir="$RUNNER_TEMP/tv2-sast-reports"
+          report_dir="$RUNNER_TEMP/sast-reports"
           mkdir -p "$report_dir"
           echo "REPORT_DIR=$report_dir" >> "$GITHUB_ENV"
-
+      
+      # Cai Semgrep
       - name: Install Semgrep
         shell: bash
         run: |
           python -m pip install --disable-pip-version-check semgrep
           semgrep --version > "$REPORT_DIR/semgrep-version.txt"
-
-      - name: Scan repository with Semgrep
+      
+      # SAST chay quet
+      - name: Scan SAST by Semgrep
         id: semgrep
         shell: bash
         run: |
@@ -112,17 +121,18 @@ jobs:
             echo "Quet ma nguon đuoc ho tro trong toan repository."
             echo "Ngoai le: .github/workflows/main.yml."
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Evaluate SAST quality gate
+      
+      # danh gia gate
+      - name: gate-SAST
         shell: bash
         run: python scripts/security/sast_gate.py
 
       # Upload bao cao khi gate ket thuc
-      - name: Upload SAST reports
+      - name: SAST Scan Reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tv2-sast-reports
+          name: sast-reports
           path: ${{ env.REPORT_DIR }}/
           if-no-files-found: error
           retention-days: 14
@@ -131,158 +141,51 @@ jobs:
   # SCA: TỰ NHẬN DIỆN DEPENDENCY TRONG REPOSITORY
   # =========================================================
   sca-scan:
-    name: "SCA - Dependency Check"
+    name: "Software Composition Analysis"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
-
-    
+    env: 
+      # chan cac lo hong chua co ban va
+      BLOCK_UNFIXED: 'true'
 
     steps:
-
-
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Prepare reports
-        shell: bash
+      - name: Prepare reports folder
         run: |
-          report_dir="$RUNNER_TEMP/tv2-sca-reports"
-          mkdir -p "$report_dir"
-          echo "REPORT_DIR=$report_dir" >> "$GITHUB_ENV"
-
-      - name: Scan repository dependencies
-        id: trivy
+          echo "REPORT_DIR=$RUNNER_TEMP/sca-scan-report" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sca-scan-report"
+      
+      # bao cao sca sau khi quet
+      - name: SCA Scan By Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: vuln
+          ignore-unfixed: false
+          list-all-pkgs: true
           format: json
           output: ${{ env.REPORT_DIR }}/trivy-fs.json
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: false
           exit-code: '0'
-          list-all-pkgs: true
-          cache: true
 
-      - name: Evaluate dependency quality gate
-        shell: bash
+      # quet bao cao va chan
+      - name: gate-sca
         run: |
-          python - <<'PY'
-          import json
-          import os
-          import sys
-          from collections import Counter
-          from pathlib import Path
+          python3 scripts/sca_gate.py \
+            --report "$REPORT_DIR/trivy-fs.json"
 
-          reports = Path(os.environ["REPORT_DIR"])
-          report_file = reports / "trivy-fs.json"
-
-          try:
-              data = json.loads(report_file.read_text())
-              if not isinstance(data, dict):
-                  raise ValueError("JSON root must be an object")
-              results = data.get("Results", [])
-              if not isinstance(results, list):
-                  raise ValueError("Invalid Results")
-          except Exception as exc:
-              print(f"::error::Trivy report is missing or invalid: {exc}")
-              sys.exit(1)
-
-          gate_levels = {
-              value.strip().upper()
-              for value in os.environ["GATE_SEVERITY"].split(",")
-              if value.strip()
-          }
-          valid_levels = {"UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
-          if not gate_levels or not gate_levels <= valid_levels:
-              print("::error::Invalid GATE_SEVERITY.")
-              sys.exit(1)
-
-          vulnerabilities = [
-              vulnerability
-              for result in results
-              for vulnerability in (result.get("Vulnerabilities") or [])
-          ]
-          packages = [
-              package
-              for result in results
-              for package in (result.get("Packages") or [])
-          ]
-          blocking = [
-              vulnerability
-              for vulnerability in vulnerabilities
-              if str(vulnerability.get("Severity", "UNKNOWN")).upper()
-              in gate_levels
-          ]
-          counts = Counter(
-              str(v.get("Severity", "UNKNOWN")).upper()
-              for v in vulnerabilities
-          )
-
-          # Dự án này có dependency: không nhận diện được package thì fail.
-          coverage_error = not packages
-          status = "ERROR" if coverage_error else "BLOCKED" if blocking else "PASS"
-
-          lines = [
-              "## TV2 - SCA / Trivy filesystem",
-              "",
-              "| Nội dung | Kết quả |",
-              "|---|---|",
-              f"| Quality Gate | {status} |",
-              f"| Số target trong báo cáo | {len(results)} |",
-              f"| Số bản ghi package | {len(packages)} |",
-              f"| Tổng bản ghi lỗ hổng | {len(vulnerabilities)} |",
-              f"| Bản ghi bị chặn | {len(blocking)} |",
-              f"| Ngưỡng chặn | {', '.join(sorted(gate_levels))} |",
-              "| Bỏ qua lỗ hổng chưa có bản vá | Không |",
-              "",
-              "### Lỗ hổng theo severity",
-              "",
-              "| Severity | Số lượng |",
-              "|---|---|",
-          ]
-          lines += [
-              f"| {level} | {counts.get(level, 0)} |"
-              for level in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
-          ]
-
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("\n".join(lines) + "\n")
-
-          (reports / "gate-result.json").write_text(
-              json.dumps({
-                  "status": status,
-                  "targets": len(results),
-                  "package_records": len(packages),
-                  "vulnerability_records": len(vulnerabilities),
-                  "blocking_records": len(blocking),
-                  "gate_severity": sorted(gate_levels),
-              }, indent=2)
-          )
-
-          if coverage_error:
-              print("::error::No dependency packages detected; check supported manifests and lockfiles.")
-              sys.exit(1)
-          if blocking:
-              print("::error::Dependency quality gate blocked deployment.")
-              sys.exit(1)
-          PY
-
-      - name: Upload dependency reports
+      # luu bao cao
+      - name: Upload SCA Report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tv2-sca-reports
+          name: sca-scan-report
           path: ${{ env.REPORT_DIR }}/
           if-no-files-found: error
           retention-days: 14
