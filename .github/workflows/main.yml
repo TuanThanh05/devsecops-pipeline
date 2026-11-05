@@ -3,10 +3,8 @@ permissions:
   contents: read
 on:
   push:
-    branches: [ main, dev-project, tv1-deploy, tv2-deploy, tv3-deploy ]
-  pull_request:
-    branches: [ main, dev-project ]
-  workflow_dispatch:
+    branches:
+      - tv2-test
   # STAGE 1 ENV
 
 env:
