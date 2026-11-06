@@ -32,7 +32,11 @@ def scan_scope(event):
         return "commits in this push"
     if event == "pull_request":
         return "commits in this pull request"
-    return "full git history"
+    if event in ("workflow_dispatch", "schedule"):
+        return "full history (all branches)"
+    if event is None:
+        return "local run"
+    return f"unknown ({event})"
 
 
 # 2. doc bao cao
@@ -274,7 +278,8 @@ def summary_tables(stats):
         ),
         "",
     ]
-    lines += fingerprint_section(stats["fingerprints"])
+    if stats["fingerprints"]:
+        lines += fingerprint_section(stats["fingerprints"])
     return lines
 
 
