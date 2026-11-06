@@ -15,7 +15,7 @@ env:
 
 jobs:
   # STAGE 2 SCAN PROJECT
-  # # quet secret trong cac commit moi, chay tay thi quet toan bo lich su moi nhanh
+  # quet secret trong cac commit moi, chay tay thi quet toan bo lich su moi nhanh
   secret-scan:
     name: "Secret Scan"
     runs-on: ubuntu-latest
@@ -219,6 +219,7 @@ jobs:
           image-ref: ${{ env.IMAGE }}
           ignore-unfixed: false
           list-all-pkgs: true
+          scanners: vuln
           format: json
           output: ${{ env.REPORT_DIR }}/trivy-image.json
           exit-code: '0'
@@ -333,11 +334,11 @@ jobs:
             Commit    : ${{ github.sha }}
 
             Reports:
-              Secret Scan    : ${{ needs.secret-scan.result }}
-              SAST           : ${{ needs.sast-scan.result }}
-              SCA            : ${{ needs.sca-scan.result }}
+              Secret Scan          : ${{ needs.secret-scan.result }}
+              SAST                 : ${{ needs.sast-scan.result }}
+              SCA                  : ${{ needs.sca-scan.result }}
               Container Image Scan : ${{ needs.container-scan.result }}
-              Deploy         : ${{ needs.deploy-production.result }}
+              Deploy               : ${{ needs.deploy-production.result }}
 
             View details:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
