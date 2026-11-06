@@ -13,6 +13,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt && python -m pip un
 RUN useradd --create-home appuser
 
 COPY app.py .
+COPY templates/ ./templates/
 
 USER appuser
 

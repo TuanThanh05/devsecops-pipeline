@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Demo app thời tiết</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
+
+    <style>
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+        @keyframes fadeInSlide {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .animate-fade-in {
+            animation: fadeInSlide 0.35s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-sky-100 via-blue-50 to-indigo-100 text-slate-800 font-sans flex flex-col justify-between p-4 sm:p-6 md:p-10">
+
+    <main class="w-full max-w-2xl mx-auto my-auto">
+
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <div class="inline-flex items-center justify-center gap-2.5 px-4 py-1.5 rounded-full bg-sky-500/10 text-sky-700 text-xs font-semibold tracking-wide uppercase mb-3 border border-sky-500/20">
+                <svg class="w-4 h-4 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                </svg>
+                An toàn mạng - Nhóm 13
+            </div>
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+                Bảng Thời Tiết Mini
+            </h1>
+            <p class="mt-2 text-sm sm:text-base text-slate-600">
+                Tra cứu nhanh nhiệt độ, độ ẩm và tình trạng thời tiết theo thời gian thực
+            </p>
+        </header>
+
+        <!-- Khung chính (Search + Lịch sử + Kết quả) -->
+        <section class="glass-card rounded-3xl shadow-xl shadow-sky-900/5 border border-white/80 p-5 sm:p-8">
+
+            <!-- 1. Thanh tìm kiếm trung tâm -->
+            <form id="search-form" class="relative flex flex-col sm:flex-row gap-3" autocomplete="off">
+                <div class="relative flex-1">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-slate-400">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 103.5 10.5a7.5 7.5 0 0013.15 6.15z" />
+                        </svg>
+                    </span>
+                    <input
+                        id="city-input"
+                        type="text"
+                        placeholder="Nhập tên thành phố (VD: Hanoi, Da Nang, Tokyo, London)..."
+                        class="w-full pl-11 pr-4 py-3.5 rounded-2xl bg-white border border-slate-200/90 text-slate-800 placeholder-slate-400 text-sm sm:text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition"
+                        required
+                    />
+                </div>
+                <button
+                    id="search-btn"
+                    type="submit"
+                    class="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 active:scale-[0.99] text-white font-semibold text-sm sm:text-base shadow-md shadow-sky-500/25 transition duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                    <span id="search-btn-text">Tìm kiếm</span>
+                    <!-- Icon mũi tên / Loading spinner -->
+                    <svg id="search-btn-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                    </svg>
+                    <svg id="search-spinner" class="hidden w-4 h-4 animate-spin text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </button>
+            </form>
+
+            <!-- 2. Khu vực hiển thị Lịch sử tìm kiếm (5 thành phố gần nhất) -->
+            <div id="history-section" class="mt-4 hidden">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Tìm kiếm gần đây:
+                    </span>
+                    <button
+                        id="clear-history-btn"
+                        type="button"
+                        class="text-xs text-slate-400 hover:text-rose-500 transition font-medium"
+                        title="Xóa toàn bộ lịch sử tìm kiếm"
+                    >
+                        Xóa lịch sử
+                    </button>
+                </div>
+                <!-- Danh sách các nút bấm (chips/tags) -->
+                <div id="history-chips" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- 3. Khu vực thông báo lỗi -->
+            <div
+                id="error-box"
+                role="alert"
+                class="hidden mt-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 flex items-start gap-3 animate-fade-in"
+            >
+                <svg class="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                </svg>
+                <div class="flex-1 text-sm font-medium" id="error-message">
+                    Không tìm thấy thành phố, vui lòng thử lại!
+                </div>
+            </div>
+
+            <!-- 4. Trạng thái chờ ban đầu (Empty State) -->
+            <div id="empty-state" class="mt-8 py-10 text-center border-t border-slate-200/60">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-500">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                </div>
+                <p class="text-slate-600 font-medium">Nhập tên một thành phố để bắt đầu xem thời tiết</p>
+                <p class="text-xs text-slate-400 mt-1">Gợi ý: Hà Nội, Hồ Chí Minh, Đà Nẵng, Huế, Cần Thơ...</p>
+            </div>
+
+            <!-- 5. Khu vực hiển thị thông tin thời tiết chính -->
+            <div id="weather-card" class="hidden mt-7 pt-6 border-t border-slate-200/70 animate-fade-in">
+                <!-- Hàng trên: Tên thành phố + Nhiệt độ & Icon -->
+                <div class="flex flex-col sm:flex-row items-center justify-between gap-4 bg-gradient-to-br from-sky-500 via-sky-600 to-indigo-600 text-white rounded-2xl p-6 shadow-lg shadow-sky-600/20">
+                    <div class="text-center sm:text-left">
+                        <div class="inline-flex items-center gap-2">
+                            <h2 id="weather-city" class="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                                Hà Nội
+                            </h2>
+                            <span
+                                id="weather-country"
+                                class="px-2.5 py-0.5 text-xs font-bold uppercase rounded-full bg-white/20 backdrop-blur-sm"
+                            >
+                                VN
+                            </span>
+                        </div>
+                        <p id="weather-date" class="text-xs sm:text-sm text-sky-100 mt-1"></p>
+                        <p
+                            id="weather-description"
+                            class="mt-3 inline-block px-3.5 py-1 rounded-full bg-white/15 text-sm font-medium tracking-wide"
+                        >
+                            Trời quang đãng
+                        </p>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <img
+                            id="weather-icon"
+                            src="https://openweathermap.org/img/wn/01d@4x.png"
+                            alt="Biểu tượng thời tiết"
+                            class="w-24 h-24 sm:w-28 sm:h-28 drop-shadow-md -my-2"
+                        />
+                        <div class="text-right">
+                            <div class="flex items-start justify-end">
+                                <span id="weather-temp" class="text-5xl sm:text-6xl font-extrabold leading-none">28</span>
+                                <span class="text-2xl font-bold mt-1 ml-0.5">°C</span>
+                            </div>
+                            <p class="text-xs text-sky-100 mt-1.5">
+                                Cảm giác như <span id="weather-feels-like" class="font-semibold">30°C</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hàng dưới: Các chỉ số chi tiết (Nhiệt độ Cao/Thấp, Độ ẩm, Tốc độ gió, Áp suất) -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mt-4">
+                    <!-- Độ ẩm (%) -->
+                    <div class="p-4 rounded-2xl bg-white/90 border border-slate-200/70 shadow-sm flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2.69l5.66 5.66a8 8 0 11-11.31 0z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-xs text-slate-400 font-medium">Độ ẩm</p>
+                            <p id="weather-humidity" class="text-lg font-bold text-slate-800">65%</p>
+                        </div>
+                    </div>
+
+                    <!-- Tình trạng / Nhiệt độ Cao-Thấp -->
+                    <div class="p-4 rounded-2xl bg-white/90 border border-slate-200/70 shadow-sm flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-xs text-slate-400 font-medium">Thấp / Cao</p>
+                            <p id="weather-minmax" class="text-base font-bold text-slate-800">25° / 31°C</p>
+                        </div>
+                    </div>
+
+                    <!-- Tốc độ gió -->
+                    <div class="p-4 rounded-2xl bg-white/90 border border-slate-200/70 shadow-sm flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-xs text-slate-400 font-medium">Tốc độ gió</p>
+                            <p id="weather-wind" class="text-lg font-bold text-slate-800">3.2 m/s</p>
+                        </div>
+                    </div>
+
+                    <!-- Áp suất khí quyển -->
+                    <div class="p-4 rounded-2xl bg-white/90 border border-slate-200/70 shadow-sm flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p class="text-xs text-slate-400 font-medium">Áp suất</p>
+                            <p id="weather-pressure" class="text-lg font-bold text-slate-800">1012 hPa</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="text-center text-xs text-slate-400 mt-8">
+        Xây dựng với Python Flask, Tailwind CSS &amp; OpenWeatherMap API
+    </footer>
+
+    <!-- Logic JavaScript thuần (Vanilla JS) -->
+    <script>
+        // =========================================================================
+        // CẤU HÌNH & THAM CHIẾU DOM
+        // =========================================================================
+        const STORAGE_KEY = 'weather_mini_app_history';
+        const MAX_HISTORY_ITEMS = 5;
+
+        const searchForm = document.getElementById('search-form');
+        const cityInput = document.getElementById('city-input');
+        const searchBtn = document.getElementById('search-btn');
+        const searchBtnText = document.getElementById('search-btn-text');
+        const searchBtnIcon = document.getElementById('search-btn-icon');
+        const searchSpinner = document.getElementById('search-spinner');
+
+        const historySection = document.getElementById('history-section');
+        const historyChips = document.getElementById('history-chips');
+        const clearHistoryBtn = document.getElementById('clear-history-btn');
+
+        const errorBox = document.getElementById('error-box');
+        const errorMessage = document.getElementById('error-message');
+        const emptyState = document.getElementById('empty-state');
+        const weatherCard = document.getElementById('weather-card');
+
+        // Các phần tử hiển thị dữ liệu thời tiết
+        const weatherCity = document.getElementById('weather-city');
+        const weatherCountry = document.getElementById('weather-country');
+        const weatherDate = document.getElementById('weather-date');
+        const weatherDescription = document.getElementById('weather-description');
+        const weatherIcon = document.getElementById('weather-icon');
+        const weatherTemp = document.getElementById('weather-temp');
+        const weatherFeelsLike = document.getElementById('weather-feels-like');
+        const weatherHumidity = document.getElementById('weather-humidity');
+        const weatherMinMax = document.getElementById('weather-minmax');
+        const weatherWind = document.getElementById('weather-wind');
+        const weatherPressure = document.getElementById('weather-pressure');
+
+        // =========================================================================
+        // QUẢN LÝ LỊCH SỬ TÌM KIẾM VỚI LOCALSTORAGE (TỐI ĐA 5 THÀNH PHỐ GẦN NHẤT)
+        // =========================================================================
+
+        /**
+         * Đọc danh sách lịch sử thành phố từ localStorage.
+         * @returns {string[]} Mảng tên các thành phố đã lưu
+         */
+        function getSearchHistory() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (err) {
+                console.warn('Không thể đọc lịch sử từ localStorage:', err);
+                return [];
+            }
+        }
+
+        /**
+         * Lưu thành phố mới vào đầu danh sách lịch sử (chỉ gọi khi tìm kiếm thành công).
+         * Loại bỏ trùng lặp không phân biệt hoa thường và giới hạn đúng 5 phần tử.
+         * @param {string} cityName Tên thành phố chuẩn trả về từ API
+         */
+        function saveCityToHistory(cityName) {
+            if (!cityName) return;
+            const trimmed = cityName.trim();
+            let history = getSearchHistory();
+
+            // Xóa phần tử trùng lặp (nếu đã có trước đó) để đưa lên vị trí đầu tiên
+            history = history.filter(
+                (item) => item.toLowerCase() !== trimmed.toLowerCase()
+            );
+
+            // Thêm vào đầu mảng và cắt tối đa 5 phần tử
+            history.unshift(trimmed);
+            if (history.length > MAX_HISTORY_ITEMS) {
+                history = history.slice(0, MAX_HISTORY_ITEMS);
+            }
+
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+            } catch (err) {
+                console.warn('Không thể lưu lịch sử vào localStorage:', err);
+            }
+
+            renderHistoryChips();
+        }
+
+        /**
+         * Hiển thị danh sách 5 thành phố gần nhất dưới dạng các nút bấm (chips/tags).
+         */
+        function renderHistoryChips() {
+            const history = getSearchHistory();
+            historyChips.innerHTML = '';
+
+            if (history.length === 0) {
+                historySection.classList.add('hidden');
+                return;
+            }
+
+            historySection.classList.remove('hidden');
+
+            history.forEach((city) => {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className =
+                    'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-medium bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200/80 hover:border-sky-300 shadow-sm transition active:scale-95';
+                chip.innerHTML = `
+                    <svg class="w-3.5 h-3.5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span></span>
+                `;
+                // Gán textContent để chống XSS tuyệt đối
+                chip.querySelector('span').textContent = city;
+
+                // Khi người dùng click vào chip, tự động điền vào ô tìm kiếm và tra cứu lại
+                chip.addEventListener('click', () => {
+                    cityInput.value = city;
+                    fetchWeather(city);
+                });
+
+                historyChips.appendChild(chip);
+            });
+        }
+
+        // Xử lý sự kiện xóa lịch sử tìm kiếm
+        clearHistoryBtn.addEventListener('click', () => {
+            localStorage.removeItem(STORAGE_KEY);
+            renderHistoryChips();
+        });
+
+        // =========================================================================
+        // GIAO TIẾP API & CẬP NHẬT GIAO DIỆN
+        // =========================================================================
+
+        /**
+         * Bật/tắt trạng thái đang tải (loading) trên nút tìm kiếm.
+         * @param {boolean} isLoading
+         */
+        function setLoadingState(isLoading) {
+            searchBtn.disabled = isLoading;
+            if (isLoading) {
+                searchBtnText.textContent = 'Đang tải...';
+                searchBtnIcon.classList.add('hidden');
+                searchSpinner.classList.remove('hidden');
+            } else {
+                searchBtnText.textContent = 'Tìm kiếm';
+                searchBtnIcon.classList.remove('hidden');
+                searchSpinner.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Hiển thị thông báo lỗi trên UI.
+         * @param {string} message Nội dung thông báo lỗi
+         */
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorBox.classList.remove('hidden');
+            weatherCard.classList.add('hidden');
+        }
+
+        /**
+         * Ẩn khung thông báo lỗi.
+         */
+        function hideError() {
+            errorBox.classList.add('hidden');
+        }
+
+        /**
+         * Định dạng ngày giờ hiện tại sang tiếng Việt thân thiện.
+         */
+        function formatCurrentDateVi() {
+            const now = new Date();
+            return now.toLocaleDateString('vi-VN', {
+                weekday: 'long',
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+            });
+        }
+
+        /**
+         * Cập nhật dữ liệu thời tiết lên thẻ giao diện chính.
+         * @param {Object} data Dữ liệu JSON trả về từ Backend `/api/weather`
+         */
+        function renderWeatherCard(data) {
+            weatherCity.textContent = data.city;
+            weatherCountry.textContent = data.country || '--';
+            weatherDate.textContent = `Cập nhật: ${formatCurrentDateVi()}`;
+            weatherDescription.textContent = data.description;
+            weatherIcon.src = data.icon_url;
+            weatherIcon.alt = data.description;
+
+            weatherTemp.textContent = Math.round(data.temperature);
+            weatherFeelsLike.textContent = `${data.feels_like}°C`;
+            weatherHumidity.textContent = `${data.humidity}%`;
+            weatherMinMax.textContent = `${Math.round(data.temp_min)}° / ${Math.round(data.temp_max)}°C`;
+            weatherWind.textContent = `${data.wind_speed} m/s`;
+            weatherPressure.textContent = `${data.pressure} hPa`;
+
+            emptyState.classList.add('hidden');
+            weatherCard.classList.remove('hidden');
+        }
+
+        /**
+         * Gọi API Backend `/api/weather?city=...` để lấy thông tin thời tiết.
+         * @param {string} city Tên thành phố cần tìm
+         */
+        async function fetchWeather(city) {
+            const cleanedCity = city.trim();
+            if (!cleanedCity) {
+                showError('Vui lòng nhập tên thành phố hoặc khu vực!');
+                return;
+            }
+
+            hideError();
+            setLoadingState(true);
+
+            try {
+                const response = await fetch(
+                    `/api/weather?city=${encodeURIComponent(cleanedCity)}`
+                );
+                const payload = await response.json();
+
+                if (!response.ok) {
+                    // Hiển thị thông báo lỗi từ Backend (404 không tìm thấy thành phố hoặc 500 lỗi hệ thống)
+                    showError(
+                        payload.error || 'Không tìm thấy thành phố, vui lòng thử lại!'
+                    );
+                    return;
+                }
+
+                // Hiển thị dữ liệu lên UI và lưu thành phố vào lịch sử (tối đa 5 mục)
+                renderWeatherCard(payload);
+                saveCityToHistory(payload.city);
+            } catch (networkError) {
+                console.error('Lỗi kết nối tới Backend:', networkError);
+                showError(
+                    'Không thể kết nối tới máy chủ. Vui lòng kiểm tra lại server Flask!'
+                );
+            } finally {
+                setLoadingState(false);
+            }
+        }
+
+        // Lắng nghe sự kiện submit trên thanh tìm kiếm
+        searchForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            fetchWeather(cityInput.value);
+        });
+
+        // Khởi tạo lịch sử tìm kiếm ngay khi trang vừa tải xong
+        document.addEventListener('DOMContentLoaded', () => {
+            renderHistoryChips();
+        });
+    </script>
+</body>
+</html>
