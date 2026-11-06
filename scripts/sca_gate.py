@@ -13,6 +13,10 @@ DETAIL_HEADER = [
     "| Library | CVE | Severity | Installed | Fixed | Status |",
     "|---|---|---|---|---|---|",
 ]
+WARNING_HEADER = [
+    "| Library | CVE | Severity | Installed | Fixed | Status | Reason |",
+    "|---|---|---|---|---|---|---|",
+]
 
 
 def fail(message):
@@ -95,8 +99,18 @@ def classify(results, gate_order, block_unfixed):
     in_gate = [v for v in all_vulns if severity_of(v) in gate_order]
     fixed = [v for v in in_gate if has_fix(v)]
     unfixed = [v for v in in_gate if not has_fix(v)]
-    # loi ngoai muc xet chi duoc dem, khong chan, khong canh bao
     blocking, warning = (fixed + unfixed, []) if block_unfixed else (fixed, unfixed)
+    unrated = [
+        v for v in all_vulns
+        if severity_of(v) == "UNKNOWN" and "UNKNOWN" not in gate_order
+    ]
+    warning = [{**v, "reason": "severity not rated"} for v in unrated] + [
+        {**v, "reason": "no fix available"} for v in warning
+    ]
+    other = [
+        v for v in all_vulns
+        if severity_of(v) not in gate_order and severity_of(v) != "UNKNOWN"
+    ]
     return {
         "all": all_vulns,
         "packages": packages,
@@ -105,6 +119,7 @@ def classify(results, gate_order, block_unfixed):
         "unfixed": unfixed,
         "blocking": blocking,
         "warning": warning,
+        "other": other,
     }
 
 
@@ -121,16 +136,45 @@ def write_summary(lines):
         fail(f"cannot write summary: {exc}")
 
 
-def detail_table(vulns):
+def table_cell(value):
+    text = str(value) if value is not None and value != "" else "-"
+    return text.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
+
+
+def detail_table(vulns, show_reason=False):
     rows = [
-        f"| {v.get('PkgName') or '-'} | {v.get('VulnerabilityID') or '-'} "
-        f"| {severity_of(v)} | {v.get('InstalledVersion') or '-'} "
-        f"| {v.get('FixedVersion') or '-'} | {v.get('Status') or '-'} |"
+        f"| {table_cell(v.get('PkgName'))} | {table_cell(v.get('VulnerabilityID'))} "
+        f"| {table_cell(severity_of(v))} | {table_cell(v.get('InstalledVersion'))} "
+        f"| {table_cell(v.get('FixedVersion'))} | {table_cell(v.get('Status'))} "
+        f"| {table_cell(v.get('reason'))} |"
+        if show_reason else
+        f"| {table_cell(v.get('PkgName'))} | {table_cell(v.get('VulnerabilityID'))} "
+        f"| {table_cell(severity_of(v))} | {table_cell(v.get('InstalledVersion'))} "
+        f"| {table_cell(v.get('FixedVersion'))} | {table_cell(v.get('Status'))} |"
         for v in vulns[:MAX_ROWS]
     ]
     if len(vulns) > MAX_ROWS:
-        rows.append(f"| ... | {len(vulns) - MAX_ROWS} more rows, see artifact | | | | |")
-    return DETAIL_HEADER + rows
+        empty_cells = " |" * (6 if show_reason else 5)
+        rows.append(
+            f"| ... | {len(vulns) - MAX_ROWS} more rows, see artifact{empty_cells}"
+        )
+    return (WARNING_HEADER if show_reason else DETAIL_HEADER) + rows
+
+
+def other_section(other):
+    if not other:
+        return []
+    order = {level: index for index, level in enumerate(LEVELS)}
+    sorted_other = sorted(other, key=lambda v: order.get(severity_of(v), len(LEVELS)))
+    lines = [
+        "",
+        "<details>",
+        f"<summary>Other findings (not blocking): {len(other)}</summary>",
+        "",
+    ]
+    lines += detail_table(sorted_other)
+    lines += ["", "</details>"]
+    return lines
 
 
 def overview(status, stats, gate_order, block_unfixed, details):
@@ -149,7 +193,13 @@ def overview(status, stats, gate_order, block_unfixed, details):
         f"| In gate - no fix available | {len(stats['unfixed'])} |",
         f"| Blocked | {len(stats['blocking'])} |",
         f"| Warnings | {len(stats['warning'])} |",
+        f"| Warnings - no fix available | {warning_count(stats, 'no fix available')} |",
+        f"| Warnings - severity not rated | {warning_count(stats, 'severity not rated')} |",
     ]
+
+
+def warning_count(stats, reason):
+    return sum(v.get("reason") == reason for v in stats["warning"])
 
 
 def summary_tables(stats):
@@ -158,9 +208,9 @@ def summary_tables(stats):
     if stats["blocking"]:
         lines += ["", "### Blocked vulnerabilities", ""] + detail_table(stats["blocking"])
     if stats["warning"]:
-        lines += ["", "### Warnings - no fix available (not blocking, monitor)", ""]
-        lines += detail_table(stats["warning"])
-    return lines
+        lines += ["", "### Warnings (not blocking, monitor)", ""]
+        lines += detail_table(stats["warning"], show_reason=True)
+    return lines + other_section(stats["other"])
 
 
 def write_gate_result(report_path, status, stats, gate_order, block_unfixed, details):
@@ -175,6 +225,9 @@ def write_gate_result(report_path, status, stats, gate_order, block_unfixed, det
         "in_gate_unfixed": len(stats["unfixed"]),
         "blocking": len(stats["blocking"]),
         "warning": len(stats["warning"]),
+        "warning_no_fix": warning_count(stats, "no fix available"),
+        "warning_unrated": warning_count(stats, "severity not rated"),
+        "other": len(stats["other"]),
         "blocking_ids": [v.get("VulnerabilityID") for v in stats["blocking"]],
         "warning_ids": [v.get("VulnerabilityID") for v in stats["warning"]],
         **details,
@@ -201,8 +254,12 @@ def gate_status(stats):
 
 def decide(status, stats, gate_order):
     for vuln in stats["warning"]:
-        print(f"::warning::{vuln.get('PkgName')} {vuln.get('VulnerabilityID')} "
-              f"({severity_of(vuln)}) has no fix available")
+        if vuln["reason"] == "no fix available":
+            print(f"::warning::{vuln.get('PkgName')} {vuln.get('VulnerabilityID')} "
+                  f"({severity_of(vuln)}) has no fix available")
+        else:
+            print(f"::warning::{vuln.get('PkgName')} {vuln.get('VulnerabilityID')} "
+                  "severity not rated yet")
     if status == "ERROR":
         fail(f"{TITLE}: no packages detected, report cannot be treated as clean")
     if status == "BLOCKED":

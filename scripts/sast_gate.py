@@ -16,6 +16,10 @@ DETAIL_HEADER = [
     "| Rule | File | Line | Severity |",
     "|---|---|---|---|",
 ]
+WARNING_HEADER = [
+    "| Rule | File | Line | Severity | Reason |",
+    "|---|---|---|---|---|",
+]
 
 
 def fail(message):
@@ -101,10 +105,24 @@ def severity_of(finding):
 
 def classify(data, scanner_exit, gate_order):
     findings = data["results"]
+    blocking = [finding for finding in findings if severity_of(finding) in gate_order]
+    unrated = [
+        finding
+        for finding in findings
+        if severity_of(finding) == "UNKNOWN" and "UNKNOWN" not in gate_order
+    ]
+    warning = [{**finding, "reason": "severity not rated"} for finding in unrated]
+    other = [
+        finding
+        for finding in findings
+        if severity_of(finding) not in gate_order and severity_of(finding) != "UNKNOWN"
+    ]
     return {
         "all": findings,
         "counts": Counter(severity_of(finding) for finding in findings),
-        "blocking": [finding for finding in findings if severity_of(finding) in gate_order],
+        "blocking": blocking,
+        "warning": warning,
+        "other": other,
         "scanned": data.get("paths", {}).get("scanned", []),
         "errors": data.get("errors", []),
         "scanner_exit": scanner_exit,
@@ -129,16 +147,23 @@ def table_cell(value):
     return text.replace("\r", " ").replace("\n", " ").replace("|", "\\|")
 
 
-def detail_table(findings):
+def detail_table(findings, show_reason=False):
     rows = [
         f"| {table_cell(finding.get('check_id'))} | {table_cell(finding.get('path'))} "
         f"| {table_cell(as_object(finding.get('start')).get('line'))} "
-        f"| {severity_of(finding)} |"
+        f"| {table_cell(severity_of(finding))} | {table_cell(finding.get('reason'))} |"
+        if show_reason else
+        f"| {table_cell(finding.get('check_id'))} | {table_cell(finding.get('path'))} "
+        f"| {table_cell(as_object(finding.get('start')).get('line'))} "
+        f"| {table_cell(severity_of(finding))} |"
         for finding in findings[:MAX_ROWS]
     ]
     if len(findings) > MAX_ROWS:
-        rows.append(f"| ... | {len(findings) - MAX_ROWS} more rows, see artifact | | |")
-    return DETAIL_HEADER + rows
+        empty_cells = " |" * (4 if show_reason else 3)
+        rows.append(
+            f"| ... | {len(findings) - MAX_ROWS} more rows, see artifact{empty_cells}"
+        )
+    return (WARNING_HEADER if show_reason else DETAIL_HEADER) + rows
 
 
 def error_table(errors):
@@ -150,6 +175,22 @@ def error_table(errors):
     ]
     if len(errors) > MAX_ROWS:
         lines.append(f"| ... | {len(errors) - MAX_ROWS} more rows, see artifact | |")
+    return lines
+
+
+def other_section(other):
+    if not other:
+        return []
+    order = {level: index for index, level in enumerate(LEVELS)}
+    sorted_other = sorted(other, key=lambda finding: order.get(severity_of(finding), len(LEVELS)))
+    lines = [
+        "",
+        "<details>",
+        f"<summary>Other findings (not blocking): {len(other)}</summary>",
+        "",
+    ]
+    lines += detail_table(sorted_other)
+    lines += ["", "</details>"]
     return lines
 
 
@@ -166,6 +207,7 @@ def overview(status, stats, gate_order):
         f"| Files scanned | {len(stats['scanned'])} |",
         f"| Total findings | {len(stats['all'])} |",
         f"| Blocked | {len(stats['blocking'])} |",
+        f"| Warnings | {len(stats['warning'])} |",
         f"| Analysis errors | {len(stats['errors'])} |",
         f"| Scanner exit code | {stats['scanner_exit']} |",
     ]
@@ -176,9 +218,12 @@ def summary_tables(stats):
     lines += [f"| {level} | {stats['counts'].get(level, 0)} |" for level in LEVELS]
     if stats["blocking"]:
         lines += ["", "### Blocked findings", ""] + detail_table(stats["blocking"])
+    if stats["warning"]:
+        lines += ["", "### Warnings (not blocking, monitor)", ""]
+        lines += detail_table(stats["warning"], show_reason=True)
     if stats["errors"]:
         lines += ["", "### Analysis errors", ""] + error_table(stats["errors"])
-    return lines
+    return lines + other_section(stats["other"])
 
 
 def write_gate_result(report_path, status, stats, gate_order):
@@ -189,9 +234,12 @@ def write_gate_result(report_path, status, stats, gate_order):
         "files_scanned": len(stats["scanned"]),
         "findings": len(stats["all"]),
         "blocking": len(stats["blocking"]),
+        "warning": len(stats["warning"]),
+        "other": len(stats["other"]),
         "analysis_errors": len(stats["errors"]),
         "scanner_exit_code": stats["scanner_exit"],
         "blocking_rules": [finding.get("check_id") for finding in stats["blocking"]],
+        "warning_rules": [finding.get("check_id") for finding in stats["warning"]],
     }
     try:
         (report_path.parent / "gate-result.json").write_text(
@@ -208,10 +256,15 @@ def gate_status(stats):
         return "ERROR"
     if stats["blocking"]:
         return "BLOCKED"
+    if stats["warning"]:
+        return "PASS_WITH_WARNINGS"
     return "PASS"
 
 
 def decide(status, stats, gate_order):
+    for finding in stats["warning"]:
+        print(f"::warning::{finding.get('check_id')} at {finding.get('path')}:"
+              f"{as_object(finding.get('start')).get('line')} severity not rated")
     if status == "ERROR":
         fail(f"{TITLE}: scanner failed or scan coverage is incomplete")
     if status == "BLOCKED":
