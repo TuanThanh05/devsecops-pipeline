@@ -1,12 +1,17 @@
 # DevSecOps Pipeline – Đường hầm CI/CD tích hợp kiểm thử an toàn tự động
 
+> **Đồ án môn An toàn Mạng** — Triển khai đường hầm tích hợp & kiểm thử an toàn tự động (DevSecOps Pipeline / CI-CD Security)  
+> **Nhóm thực hiện:** Bùi Huỳnh Tuấn Thành – Phan Minh Thắng – Trần Khánh Tâm &nbsp;|&nbsp; **Năm:** 2026
+
+---
+
 ## 1. Giới thiệu
 
 **DevSecOps** là cách làm phần mềm đưa việc kiểm tra bảo mật vào ngay trong quy trình tích hợp và triển khai liên tục (CI/CD), thay vì để đến cuối mới kiểm tra. Bảo mật được kiểm tra **tự động, mỗi lần code thay đổi**, và **càng sớm càng tốt** (shift-left).
 
 Repo này gồm:
 
-- Một ứng dụng web mẫu (`app.py`) đóng gói bằng Docker (`Dockerfile`).
+- Một ứng dụng web mẫu **Bảng Thời Tiết Mini (Weather Dashboard)** (`app.py`, `templates/index.html`) đóng gói bằng Docker (`Dockerfile`).
 - Một workflow GitHub Actions (`.github/workflows/main.yml`) chạy 4 lớp quét bảo mật, rồi deploy lên Render.
 - Bốn **script cổng kiểm soát** (`scripts/*_gate.py`). Mỗi script đọc báo cáo của công cụ quét, ghi báo cáo dễ đọc lên trang kết quả của GitHub, rồi quyết định **cho qua** hay **chặn**.
 
@@ -42,7 +47,7 @@ Pipeline được xây dựng và **kiểm chứng trên đúng một loại d�
 |---|---|
 | Số repo | 1 repo |
 | Số service | 1 ứng dụng web, 1 Dockerfile (không phải monorepo, không phải microservice) |
-| Đội ngũ | Chúng tôinhỏ (khoảng 2–5 người), làm theo **GitHub Flow** |
+| Đội ngũ | Nhóm nhỏ (khoảng 2–5 người), làm theo **GitHub Flow** |
 | Môi trường | 1 môi trường production (không có staging) |
 | Chi phí | Dùng được hoàn toàn bằng gói miễn phí: GitHub Actions cho repo public, Render free, Gmail |
 
@@ -116,7 +121,7 @@ flowchart LR
 
 Mọi cổng đều theo cùng một khuôn:
 
-```
+```text
 Công cụ quét ghi báo cáo đầy đủ (không tự chặn)
         ↓
 Script cổng đọc báo cáo → phân loại → ghi Summary + gate-result.json
@@ -139,7 +144,7 @@ Nguyên tắc **fail-closed**: báo cáo thiếu, hỏng, hoặc không quét đ
 
 Lý do SCA và Container khác nhau:
 
-- Thư viện trong `requirements.txt` do Chúng tôi**tự chọn**, nên lỗ hổng chưa có bản vá vẫn xử lý được (đổi thư viện khác). Vì vậy SCA chặn cả loại này.
+- Thư viện trong `requirements.txt` do nhóm **tự chọn**, nên lỗ hổng chưa có bản vá vẫn xử lý được (đổi thư viện khác). Vì vậy SCA chặn cả loại này.
 - Gói hệ điều hành trong image do **Debian** phát hành. Khi Debian chưa có bản vá, đây là điều không tự sửa được. Vì vậy Container chỉ cảnh báo loại này.
 
 ### 7.4. Cổng chặn lần deploy mới, không tắt ứng dụng đang chạy
@@ -167,7 +172,7 @@ Pipeline chỉ chạy khi có code mới. Cổng đỏ nghĩa là **bản mới 
 | SAST | **Semgrep** Community Edition 1.183.0 | Mẫu code nguy hiểm: SQL injection, command injection, cấu hình không an toàn… | Mã nguồn | [semgrep/semgrep](https://github.com/semgrep/semgrep), bộ rule: [semgrep/semgrep-rules](https://github.com/semgrep/semgrep-rules) |
 | SCA | **Trivy** (chế độ `fs`, qua `trivy-action` v0.36.0) | Lỗ hổng (CVE) của thư viện **khai báo** trong `requirements.txt` | File khai báo thư viện | [aquasecurity/trivy](https://github.com/aquasecurity/trivy), [aquasecurity/trivy-action](https://github.com/aquasecurity/trivy-action) |
 | Container Security | **Trivy** (chế độ `image`) | Lỗ hổng của **gói hệ điều hành** (Debian) và **mọi thư viện Python đã cài** trong image, kể cả thư viện con | Docker image sau khi build | như trên |
-| Quality Gate | **4 script Python** do Chúng tôiviết | Đọc báo cáo, phân loại, quyết định chặn | Báo cáo JSON/SARIF | `scripts/` trong repo này |
+| Quality Gate | **4 script Python** do nhóm viết | Đọc báo cáo, phân loại, quyết định chặn | Báo cáo JSON/SARIF | `scripts/` trong repo này |
 
 Công nghệ nền tảng:
 
@@ -177,7 +182,7 @@ Công nghệ nền tảng:
 | Lấy code, cài Python, lưu artifact | `actions/checkout`, `actions/setup-python`, `actions/upload-artifact` | [actions/checkout](https://github.com/actions/checkout), [actions/setup-python](https://github.com/actions/setup-python), [actions/upload-artifact](https://github.com/actions/upload-artifact) |
 | Gửi email | `dawidd6/action-send-mail` qua Gmail SMTP | [dawidd6/action-send-mail](https://github.com/dawidd6/action-send-mail) |
 | Đóng gói | Docker, base image `python:3.11-slim` | [hub.docker.com/_/python](https://hub.docker.com/_/python) |
-| Ứng dụng mẫu | Flask 3.1.3, Werkzeug 3.1.9, gunicorn 26.2.0 | [pallets/flask](https://github.com/pallets/flask), [pallets/werkzeug](https://github.com/pallets/werkzeug), [benoitc/gunicorn](https://github.com/benoitc/gunicorn) |
+| Ứng dụng mẫu | Flask 3.1.3, Werkzeug 3.1.9, gunicorn 26.2.0, requests 2.34.2, python-dotenv 1.2.4 | [pallets/flask](https://github.com/pallets/flask), [pallets/werkzeug](https://github.com/pallets/werkzeug), [benoitc/gunicorn](https://github.com/benoitc/gunicorn) |
 | Nơi chạy ứng dụng | Render (Web Service, Deploy Hook) | [render.com/docs/deploy-hooks](https://render.com/docs/deploy-hooks) |
 
 ## 9. Hướng dẫn cài đặt và dùng thử
@@ -197,8 +202,9 @@ Vào tab **Actions** của repo và bật GitHub Actions nếu được hỏi.
 
 1. Đăng nhập [render.com](https://render.com) → **New** → **Web Service** → kết nối repo GitHub.
 2. Branch: `main`. Runtime: **Docker**. Render tự cung cấp biến `PORT`; `Dockerfile` đã dùng `${PORT:-5000}`.
-3. Trong **Settings**, đặt **Auto-Deploy: Off**. Nếu để On, Render sẽ tự deploy mỗi khi có commit mới, **bỏ qua toàn bộ các cổng bảo mật**.
-4. Trong **Settings → Deploy Hook**, sao chép URL. URL này có giá trị như mật khẩu: không dán vào code, không gửi công khai; nếu lỡ lộ thì tạo lại hook mới.
+3. Trong mục **Environment Variables**, thêm biến `OPENWEATHER_API_KEY` chứa API Key từ OpenWeatherMap để chức năng tra cứu thời tiết hoạt động.
+4. Trong **Settings**, đặt **Auto-Deploy: Off**. Nếu để On, Render sẽ tự deploy mỗi khi có commit mới, **bỏ qua toàn bộ các cổng bảo mật**.
+5. Trong **Settings → Deploy Hook**, sao chép URL. URL này có giá trị như mật khẩu: không dán vào code, không gửi công khai; nếu lỡ lộ thì tạo lại hook mới.
 
 ### 9.3. Khai báo Secrets và Variables trên GitHub
 
@@ -213,7 +219,7 @@ Vào **Settings → Secrets and variables → Actions**:
 | Secret (chỉ khi repo thuộc tổ chức) | `GITLEAKS_LICENSE` | License key của Gitleaks |
 | Variable (tuỳ chọn) | `APP_URL` | URL ứng dụng trên Render, ví dụ `https://<tên-app>.onrender.com` |
 
-Nếu đặt `APP_URL`, bước Deploy sẽ chờ tới khi `GET $APP_URL/health` trả về **đúng mã commit** vừa deploy. Muốn dùng bước này, endpoint `/health` phải trả kèm mã commit (Render cung cấp biến môi trường `RENDER_GIT_COMMIT`).
+Nếu đặt `APP_URL`, bước Deploy sẽ chờ tới khi `GET $APP_URL/health` trả về **đúng mã commit** vừa deploy (endpoint `/health` trong `app.py` đã trả kèm mã commit thông qua biến môi trường `RENDER_GIT_COMMIT`).
 
 ### 9.4. Bật Rulesets cho `main`
 
@@ -266,7 +272,7 @@ Báo cáo gốc đầy đủ của từng công cụ được lưu thành **arti
 
 ## 11. Cấu trúc thư mục
 
-```
+```text
 .
 ├── .github/workflows/main.yml   # pipeline DevSecOps
 ├── scripts/
@@ -274,10 +280,14 @@ Báo cáo gốc đầy đủ của từng công cụ được lưu thành **arti
 │   ├── sast_gate.py             # cổng SAST (đọc JSON của Semgrep)
 │   ├── sca_gate.py              # cổng SCA (đọc JSON của Trivy fs)
 │   └── container_gate.py        # cổng Container (đọc JSON của Trivy image)
-├── app.py                       # ứng dụng Flask mẫu (/ và /health)
+├── templates/
+│   └── index.html               # giao diện ứng dụng mẫu Bảng Thời Tiết Mini
+├── app.py                       # ứng dụng Flask mẫu (/, /api/weather và /health)
 ├── requirements.txt             # thư viện Python, ghi phiên bản cố định
-├── Dockerfile                   # đóng gói ứng dụng
+├── Dockerfile                   # đóng gói ứng dụng (non-root appuser, gỡ pip/wheel)
 ├── .dockerignore
+├── .gitignore
+├── .env.example                 # file mẫu cấu hình biến môi trường
 └── README.md
 ```
 
@@ -309,13 +319,13 @@ Báo cáo gốc đầy đủ của từng công cụ được lưu thành **arti
 
 ## 14. Ghi nhận công cụ của bên thứ ba
 
-Chúng tôi**không** viết các công cụ quét bảo mật. Toàn bộ khả năng phát hiện lỗ hổng, secret và lỗi lập trình đến từ các dự án mã nguồn mở và dịch vụ bên dưới. Chúng tôi cảm ơn tác giả và cộng đồng của các dự án này.
+Nhóm **không** viết các công cụ quét bảo mật. Toàn bộ khả năng phát hiện lỗ hổng, secret và lỗi lập trình đến từ các dự án mã nguồn mở và dịch vụ bên dưới. Nhóm cảm ơn tác giả và cộng đồng của các dự án này.
 
-**Phần chúng tôi tự thực hiện:**
+**Phần nhóm tự thực hiện:**
 
 - Thiết kế và cấu hình workflow `.github/workflows/main.yml`.
 - Bốn script cổng trong `scripts/`: đọc báo cáo, phân loại, chính sách chặn, Summary, `gate-result.json`.
-- `Dockerfile`, `.dockerignore`, ứng dụng mẫu `app.py`.
+- `Dockerfile`, `.dockerignore`, ứng dụng mẫu `app.py` và `templates/index.html`.
 - Chính sách Quality Gate, quy trình GitHub Flow, Rulesets, kịch bản kiểm thử.
 
 **Công cụ và dịch vụ của bên thứ ba:**
@@ -334,4 +344,3 @@ Chúng tôi**không** viết các công cụ quét bảo mật. Toàn bộ khả
 | [gunicorn](https://github.com/benoitc/gunicorn) | Benoit Chesneau và cộng đồng | MIT | Máy chủ chạy ứng dụng |
 | [python:3.11-slim](https://hub.docker.com/_/python) | Docker Official Images (Python trên nền Debian) | PSF License và giấy phép của từng gói Debian | Base image |
 | GitHub Actions, Render, Gmail | GitHub, Render, Google | Dịch vụ thương mại (dùng gói miễn phí) | Chạy pipeline, chạy ứng dụng, gửi email |
-
