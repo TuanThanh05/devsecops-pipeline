@@ -1,204 +1,295 @@
 name: DevSecOps Pipeline
 permissions:
   contents: read
-  security-events: write 
 on:
   push:
-    branches: [ main, dev-project, tv1-deploy, tv2-deploy, tv3-deploy ]
+    branches: [ main, tv1-deploy, tv2-deploy, tv3-deploy ]
   pull_request:
-    branches: [ main, dev-project ]
+    branches: [ main ]
   workflow_dispatch:
+  # STAGE 1 ENV
 
 env:
   PYTHON_VERSION: '3.11'
   GATE_SEVERITY: HIGH,CRITICAL
 
 jobs:
-  secret-scanning:
-    name: "Secret Scanning"
+  # STAGE 2 SCAN PROJECT
+  # quet secret trong cac commit moi, chay tay thi quet toan bo lich su moi nhanh
+  secret-scan:
+    name: "Secret Scan"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
     steps:
+      # lay toan bo lich su git de quet ca commit cu
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          fetch-depth: 0            # GitLeaks cần full history
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Display pipeline info
-        run: |
-          echo "Repository : ${{ github.repository }}"
-          echo "Branch     : ${{ github.ref_name }}"
-          echo "Commit SHA : ${{ github.sha }}"
-          echo "Actor      : ${{ github.actor }}"
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+      # gitleaks quet va ghi bao cao results.sarif (secret da duoc che)
+      - name: Secret Scan By Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_SUMMARY: true
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_SUMMARY: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
 
+      # doc bao cao, ghi summary va quyet dinh
+      - name: gate-secret
+        if: always()
+        run: python3 scripts/secret_gate.py --report results.sarif
 
+      # luu bao cao
+      - name: Upload Secret Report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: secret-scan-report
+          path: |
+            results.sarif
+            gate-result.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # quet ma nguon ung dung
   sast-scan:
-    name: "SAST - Static Code Analysis"
+    name: "Static Code Analysis"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
-      - name: Validate app.py exists
+      # can python rieng de cai semgrep bang pip
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Prepare report folder
         run: |
-          if [ ! -f "app.py" ]; then
-            echo "Thiếu app.py"
-            exit 1
-          fi
-          echo "app.py found — bắt đầu quét SAST"
+          echo "REPORT_DIR=$RUNNER_TEMP/sast-scan-report" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sast-scan-report"
 
       - name: Install Semgrep
-        run: pip install semgrep
+        run: python -m pip install --disable-pip-version-check semgrep==1.183.0
 
-      - name: Run Semgrep (SARIF output)
-        id: semgrep
+      # quet toan repo tru file workflow, khong chan o buoc nay
+      - name: SAST Scan By Semgrep
         run: |
-          semgrep \
-            --config=p/security-audit \
-            --config=p/python \
-            --config=p/owasp-top-ten \
-            --sarif \
-            --output=semgrep.sarif \
-            .
-        continue-on-error: true
+          scan_exit=0
+          semgrep scan \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --exclude .github/workflows/main.yml \
+            --metrics off \
+            --strict \
+            --json-output "$REPORT_DIR/semgrep.json" \
+            --sarif-output "$REPORT_DIR/semgrep.sarif" \
+            . || scan_exit=$?
+          echo "$scan_exit" > "$REPORT_DIR/semgrep-exit-code.txt"
 
-      - name: Upload Semgrep results
-        uses: github/codeql-action/upload-sarif@v3
+      # doc bao cao, ghi summary va quyet dinh
+      - name: gate-sast
         if: always()
+        run: python3 scripts/sast_gate.py --report "$REPORT_DIR/semgrep.json"
+
+      # luu bao cao
+      - name: Upload SAST Report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          sarif_file: semgrep.sarif
+          name: sast-scan-report
+          path: ${{ env.REPORT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Fail on security issues
-        if: steps.semgrep.outcome == 'failure'
-        run: |
-          echo "SAST found security vulnerabilities!"
-          exit 1
-
-
+  # quet thanh phan phu thuoc
   sca-scan:
-    name: "SCA - Dependency Check"
+    name: "Software Composition Analysis"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env: 
+      # chan cac lo hong chua co ban va
+      BLOCK_UNFIXED: 'true'
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Validate requirements.txt exists
-        run: |
-          if [ ! -f "requirements.txt" ]; then
-            echo " Thiếu requirements.txt"
-            exit 1
-          fi
-          echo "requirements.txt found — bắt đầu quét SCA"
-          cat requirements.txt
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          persist-credentials: false
+
+      - name: Prepare reports folder
+        run: |
+          echo "REPORT_DIR=$RUNNER_TEMP/sca-scan-report" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sca-scan-report"
+      
+      # bao cao sca sau khi quet
+      - name: SCA Scan By Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          ignore-unfixed: false
+          list-all-pkgs: true
+          format: json
+          output: ${{ env.REPORT_DIR }}/trivy-fs.json
           exit-code: '0'
 
-      - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v3
+      # quet bao cao va chan
+      - name: gate-sca
         if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
+        run: |
+          python3 scripts/sca_gate.py --report "$REPORT_DIR/trivy-fs.json"
 
-      - name: Run Trivy and fail on vulnerabilities
-        uses: aquasecurity/trivy-action@master
+      # luu bao cao
+      - name: Upload SCA Report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'
+          name: sca-scan-report
+          path: ${{ env.REPORT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
 
-  # STAGE 3 DOCKER BUILD AND SCAN CONTAINER
+  # dung va quet anh dong goi
   container-scan:
-      name: "Build And Scan Container"
-      runs-on: ubuntu-latest
-      needs: [secret-scanning, sast-scan, sca-scan]
-      env: 
-        # ten image cua docker
-        IMAGE: devsecops-app:${{github.sha}}
-      
-      steps:
-        # tai code cua repo ve may ao
-        - name: Checkout code
-          uses: actions/checkout@v4
-        
-        # build docker thanh image
-        - name: Build Image
-          run: docker build -t "$IMAGE" .
+    name: "Build And Scan Container"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [secret-scan, sast-scan, sca-scan]
+    permissions:
+      contents: read
+    env:
+      # ten image cua docker
+      IMAGE: app:${{github.sha}}
+      BLOCK_UNFIXED: 'false'
+    
+    steps:
+      # tai code cua repo ve may ao
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
-        # kiem tra app hoat dong
-        - name: Test App
-          run: |
-            docker run -d --name app-demo -p 5000:5000 "$IMAGE"
-            for i in $(seq 1 10); do
-              if curl -fsS http://localhost:5000/health; then exit 0; fi
-              sleep 2
-            done
-            echo "Timeout 20 second"
-            docker logs app-demo
-            exit 1
+      - name: Prepare report folder
+        run: |
+          echo "REPORT_DIR=$RUNNER_TEMP/container-scan-report" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/container-scan-report"
 
-        # kiem tra tinh trang user
-        - name: Test user container
-          run: test "$(docker run --rm "$IMAGE" whoami)" = "appuser"
-      
-        # quet container lan 1 lay bao cao tong the
-        - name: Scan Container By Trivy
-          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-          with: 
-            image-ref: ${{ env.IMAGE }}
-            # bo qua cac lo hong chua co ban va
-            ignore-unfixed: true 
-            format: json
-            output: trivy-image.json
+      # build docker thanh image
+      - name: Build Image
+        run: docker build -t "$IMAGE" .
 
-        # quet container lan 2 chan cac muc lo hong HIGH hoac CRITICAL
-        - name: gate-container
-          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-          with: 
-            image-ref: ${{ env.IMAGE }}
-            severity: ${{ env.GATE_SEVERITY }}
-            ignore-unfixed: true
-            exit-code: '1'
-            format: table
+      # kiem tra app hoat dong
+      - name: Test App
+        run: |
+          docker run -d --name app-demo -p 5000:5000 "$IMAGE"
+          for _ in $(seq 1 10); do
+            if curl -fsS http://localhost:5000/health; then exit 0; fi
+            sleep 2
+          done
+          echo "Timeout 20 second"
+          docker logs app-demo
+          exit 1
 
-        # luu bao cao
-        - name: Container Scan Report
-          if: always()  
-          uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-          with:
-            name: container-scan-report 
-            path: trivy-image.json
+      # kiem tra tinh trang user
+      - name: Test user container
+        run: test "$(docker run --rm "$IMAGE" whoami)" = "appuser"
+    
+      # luon bao cao day du, script moi quyet dinh chan hay canh bao
+      - name: Image Scan By Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          ignore-unfixed: false
+          list-all-pkgs: true
+          scanners: vuln
+          format: json
+          output: ${{ env.REPORT_DIR }}/trivy-image.json
+          exit-code: '0'
+
+      # cong quet bao cao va chan
+      - name: gate-container
+        if: always()
+        run: |
+          python3 scripts/container_gate.py --report "$REPORT_DIR/trivy-image.json"
+
+      # luu bao cao
+      - name: Upload Container Report
+        if: always()  
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: container-scan-report
+          path: ${{ env.REPORT_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
+
 
   # STAGE 4 DEPLOY PRODUCTION
   deploy-production:
     name: "Deploy to Production"
     runs-on: ubuntu-latest
-    needs: [secret-scanning, sast-scan, sca-scan, container-scan]
+    timeout-minutes: 30
+    needs: [secret-scan, sast-scan, sca-scan, container-scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions: {}
     steps:
-      - name: Deploy to production environment
-        run: echo "Deploying to production environment..."
+      # kiem tra co ma secret va dung khi thieu
+      - name: Check deploy hook
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "::error::Missing secret RENDER_DEPLOY_HOOK"
+            exit 1
+          fi
 
+      # goi deploy hook cua render, kem ma commit da qua 4 cong
+      - name: Trigger Render deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          curl -fsS -X POST "${DEPLOY_HOOK}&ref=${GITHUB_SHA}"
+          echo ""
+          echo "Render accepted deploy request for commit ${GITHUB_SHA}"
+
+      # build va kiem tra web chay voi commit moi
+      - name: Verify new version is live
+        if: vars.APP_URL != ''
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          for i in $(seq 1 40); do
+            if curl -fsS "$APP_URL/health" | grep -q "$GITHUB_SHA"; then
+              echo "Commit ${GITHUB_SHA} is live at ${APP_URL}"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Commit ${GITHUB_SHA} is not live at ${APP_URL} after 10 minutes"
+          exit 1
 
   # STAGE 5 NOTIFICATION
   notify:
     name: "Notification"
     runs-on: ubuntu-latest
-    needs: [secret-scanning, sast-scan, sca-scan, container-scan, deploy-production]
+    needs: [secret-scan, sast-scan, sca-scan, container-scan, deploy-production]
     if: always()
     steps:
       - name: Pipeline result
@@ -208,10 +299,10 @@ jobs:
             echo ""
             echo "| Gate | Tool | Result |"
             echo "|---|---|---|"
-            echo "| Secret Scan | Gitleaks | ${{ needs.secret-scanning.result }} |"
+            echo "| Secret Scan | Gitleaks | ${{ needs.secret-scan.result }} |"
             echo "| SAST | Semgrep | ${{ needs.sast-scan.result }} |"
             echo "| SCA | Trivy fs | ${{ needs.sca-scan.result }} |"
-            echo "| Container Scan | Trivy image | ${{ needs.container-scan.result }} |"
+            echo "| Container Image Scan | Trivy image | ${{ needs.container-scan.result }} |"
             echo "| Deploy | Render | ${{ needs.deploy-production.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -221,7 +312,7 @@ jobs:
   failure-email:
     name: "Failure Email"
     runs-on: ubuntu-latest
-    needs: [secret-scanning, sast-scan, sca-scan, container-scan, deploy-production]
+    needs: [secret-scan, sast-scan, sca-scan, container-scan, deploy-production]
     if: failure()
     steps:
       - name: Send failure email
@@ -243,11 +334,11 @@ jobs:
             Commit    : ${{ github.sha }}
 
             Reports:
-              Secret Scan    : ${{ needs.secret-scanning.result }}
-              SAST           : ${{ needs.sast-scan.result }}
-              SCA            : ${{ needs.sca-scan.result }}
-              Container Scan : ${{ needs.container-scan.result }}
-              Deploy         : ${{ needs.deploy-production.result }}
+              Secret Scan          : ${{ needs.secret-scan.result }}
+              SAST                 : ${{ needs.sast-scan.result }}
+              SCA                  : ${{ needs.sca-scan.result }}
+              Container Image Scan : ${{ needs.container-scan.result }}
+              Deploy               : ${{ needs.deploy-production.result }}
 
             View details:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

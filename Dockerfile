@@ -1,5 +1,7 @@
 FROM python:3.11-slim
 
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # in log ra render ngay, khong cho xuat ra file bien dich cua python
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 

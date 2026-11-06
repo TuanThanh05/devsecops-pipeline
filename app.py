@@ -36,9 +36,13 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     """
-    Endpoint Health Check phục vụ bước kiểm thử Container trong DevSecOps Pipeline.
+    Endpoint Health Check phục vụ bước kiểm thử Container và xác minh phiên bản mới trên Render.
     """
-    return jsonify({"status": "healthy", "version": "1.0"}), 200
+    return jsonify({
+        "status": "healthy",
+        "version": "1.0",
+        "commit": os.getenv("RENDER_GIT_COMMIT", "local"),
+    }), 200
 
 
 @app.route("/api/weather", methods=["GET"])
