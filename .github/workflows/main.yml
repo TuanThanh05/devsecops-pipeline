@@ -3,9 +3,9 @@ permissions:
   contents: read
 on:
   push:
-    branches: [ main, dev-project, tv1-deploy, tv2-deploy, tv3-deploy ]
+    branches: [ main, tv1-deploy, tv2-deploy, tv3-deploy ]
   pull_request:
-    branches: [ main, dev-project ]
+    branches: [ main ]
   workflow_dispatch:
   # STAGE 1 ENV
 
@@ -15,7 +15,7 @@ env:
 
 jobs:
   # STAGE 2 SCAN PROJECT
-  # quet secret bi lo trong toan bo lich su git
+  # quet secret trong cac commit moi, chay tay thi quet toan bo lich su moi nhanh
   secret-scan:
     name: "Secret Scan"
     runs-on: ubuntu-latest
@@ -103,6 +103,7 @@ jobs:
 
       # doc bao cao, ghi summary va quyet dinh
       - name: gate-sast
+        if: always()
         run: python3 scripts/sast_gate.py --report "$REPORT_DIR/semgrep.json"
 
       # luu bao cao
@@ -152,6 +153,7 @@ jobs:
 
       # quet bao cao va chan
       - name: gate-sca
+        if: always()
         run: |
           python3 scripts/sca_gate.py --report "$REPORT_DIR/trivy-fs.json"
 
@@ -211,18 +213,20 @@ jobs:
         run: test "$(docker run --rm "$IMAGE" whoami)" = "appuser"
     
       # luon bao cao day du, script moi quyet dinh chan hay canh bao
-      - name: Container Scan By Trivy
+      - name: Image Scan By Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}
           ignore-unfixed: false
           list-all-pkgs: true
+          scanners: vuln
           format: json
           output: ${{ env.REPORT_DIR }}/trivy-image.json
           exit-code: '0'
 
       # cong quet bao cao va chan
       - name: gate-container
+        if: always()
         run: |
           python3 scripts/container_gate.py --report "$REPORT_DIR/trivy-image.json"
 
@@ -298,7 +302,7 @@ jobs:
             echo "| Secret Scan | Gitleaks | ${{ needs.secret-scan.result }} |"
             echo "| SAST | Semgrep | ${{ needs.sast-scan.result }} |"
             echo "| SCA | Trivy fs | ${{ needs.sca-scan.result }} |"
-            echo "| Container Scan | Trivy image | ${{ needs.container-scan.result }} |"
+            echo "| Container Image Scan | Trivy image | ${{ needs.container-scan.result }} |"
             echo "| Deploy | Render | ${{ needs.deploy-production.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -330,11 +334,11 @@ jobs:
             Commit    : ${{ github.sha }}
 
             Reports:
-              Secret Scan    : ${{ needs.secret-scan.result }}
-              SAST           : ${{ needs.sast-scan.result }}
-              SCA            : ${{ needs.sca-scan.result }}
-              Container Scan : ${{ needs.container-scan.result }}
-              Deploy         : ${{ needs.deploy-production.result }}
+              Secret Scan          : ${{ needs.secret-scan.result }}
+              SAST                 : ${{ needs.sast-scan.result }}
+              SCA                  : ${{ needs.sca-scan.result }}
+              Container Image Scan : ${{ needs.container-scan.result }}
+              Deploy               : ${{ needs.deploy-production.result }}
 
             View details:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
