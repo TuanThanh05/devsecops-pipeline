@@ -265,7 +265,7 @@ jobs:
         env:
           DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          curl -fsS -X POST "${DEPLOY_HOOK}&ref=${GITHUB_SHA}"
+          curl -fsS -X POST "${DEPLOY_HOOK}&ref=${GITHUB_SHA}" || curl -fsS -X POST "${DEPLOY_HOOK}"
           echo ""
           echo "Render accepted deploy request for commit ${GITHUB_SHA}"
 
