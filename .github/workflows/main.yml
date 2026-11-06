@@ -3,9 +3,9 @@ permissions:
   contents: read
 on:
   push:
-    branches: [ main, dev-project, tv1-deploy, tv2-deploy, tv3-deploy ]
+    branches: [ main, tv1-deploy, tv2-deploy, tv3-deploy ]
   pull_request:
-    branches: [ main, dev-project ]
+    branches: [ main ]
   workflow_dispatch:
   # STAGE 1 ENV
 
@@ -15,7 +15,7 @@ env:
 
 jobs:
   # STAGE 2 SCAN PROJECT
-  # quet secret bi lo trong toan bo lich su git
+  # # quet secret trong cac commit moi, chay tay thi quet toan bo lich su moi nhanh
   secret-scan:
     name: "Secret Scan"
     runs-on: ubuntu-latest
@@ -103,6 +103,7 @@ jobs:
 
       # doc bao cao, ghi summary va quyet dinh
       - name: gate-sast
+        if: always()
         run: python3 scripts/sast_gate.py --report "$REPORT_DIR/semgrep.json"
 
       # luu bao cao
@@ -152,6 +153,7 @@ jobs:
 
       # quet bao cao va chan
       - name: gate-sca
+        if: always()
         run: |
           python3 scripts/sca_gate.py --report "$REPORT_DIR/trivy-fs.json"
 
@@ -223,6 +225,7 @@ jobs:
 
       # cong quet bao cao va chan
       - name: gate-container
+        if: always()
         run: |
           python3 scripts/container_gate.py --report "$REPORT_DIR/trivy-image.json"
 
