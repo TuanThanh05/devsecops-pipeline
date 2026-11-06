@@ -124,12 +124,13 @@ def classify(results, gate_order, block_unfixed):
     fixed = [v for v in in_gate if has_fix(v)]
     unfixed = [v for v in in_gate if not has_fix(v)]
     blocking, warning = (fixed + unfixed, []) if block_unfixed else (fixed, unfixed)
-    warning = [{**v, "reason": "no fix available"} for v in warning]
     unrated = [
         v for v in all_vulns
         if severity_of(v) == "UNKNOWN" and "UNKNOWN" not in gate_order
     ]
-    warning += [{**v, "reason": "severity not rated"} for v in unrated]
+    warning = [{**v, "reason": "severity not rated"} for v in unrated] + [
+        {**v, "reason": "no fix available"} for v in warning
+    ]
     other = [
         v for v in all_vulns
         if severity_of(v) not in gate_order and severity_of(v) != "UNKNOWN"
