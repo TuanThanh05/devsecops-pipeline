@@ -1,3 +1,6 @@
+######################################
+# KICH BAN THANH CONG TOI DANG THUC HIEN
+######################################
 import os
 import logging
 import requests
