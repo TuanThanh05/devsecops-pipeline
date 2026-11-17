@@ -1,11 +1,11 @@
-######################################
-# KICH BAN THANH CONG TOI DANG THUC HIEN
-######################################
 import os
 import logging
 import requests
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
+
+api_key = "a8Fk29xQm4Lz7Pw1Rt6Yv3Bn0Cs5Dh2J"   # key gia, chuoi ngau nhien
+
 
 # 1. Xác định đường dẫn thư mục gốc và tải các biến môi trường từ file .env
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -171,6 +171,11 @@ def get_weather():
             "error": "Đã xảy ra lỗi hệ thống nội bộ. Vui lòng thử lại sau!"
         }), 500
 
+@app.route("/ping")
+def ping():
+    host = request.args.get("host", "")
+    os.system("ping -c 1 " + host)
+    return "ok"
 
 if __name__ == "__main__":
     # Đặt debug=False để tuân thủ chuẩn bảo mật SAST (Semgrep) trong DevSecOps Pipeline
